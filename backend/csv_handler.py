@@ -8,7 +8,7 @@ from typing import List, Tuple
 
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 REQUIRED = ("company_name", "contact_email")
-OPTIONAL = ("website", "notes")
+OPTIONAL = ("contact_name", "website", "industry", "notes")
 
 
 def parse_csv(content: bytes, max_rows: int = 500) -> Tuple[List[dict], List[dict]]:
@@ -45,7 +45,9 @@ def parse_csv(content: bytes, max_rows: int = 500) -> Tuple[List[dict], List[dic
         valid.append({
             "company_name": company,
             "contact_email": email,
+            "contact_name": row.get("contact_name", ""),
             "website": row.get("website", ""),
+            "industry": row.get("industry", ""),
             "notes": row.get("notes", ""),
         })
         if len(valid) >= max_rows:

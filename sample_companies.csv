@@ -1,6 +1,7 @@
-company_name,contact_email,website,notes
-Acme Trading LLC,contact@acmetrading.example,https://example.com,Trading company in Dubai
-Sunrise Logistics,info@sunriselog.example,,Logistics firm
-Bluebird Restaurants,founder@bluebird.example,https://example.com,Restaurant chain
-Helix Technologies,ceo@helixtech.example,,Software startup
-Vega Healthcare,admin@vegacare.example,https://example.com,Clinic chain
+company_name,contact_name,contact_email,website,industry,notes
+Acme Trading LLC,Sarah Khan,sarah@acmetrading.example,https://example.com,Trading,Trading company in Dubai
+Sunrise Logistics,,info@sunriselog.example,,Logistics,Logistics firm
+Bluebird Restaurants,Michael Chen,founder@bluebird.example,https://example.com,F&B,Restaurant chain
+Helix Technologies,,ceo@helixtech.example,,Technology,Software startup
+Vega Healthcare,Dr. Aisha Rahman,admin@vegacare.example,https://example.com,Healthcare,Clinic chain
+Apex Manufacturing,,finance@apexmfg.example,,Manufacturing,
