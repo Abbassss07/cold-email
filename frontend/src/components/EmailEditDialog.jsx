@@ -70,24 +70,26 @@ export default function EmailEditDialog({ email, open, onClose, onChanged }) {
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Intro</label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Personalized intro <span className="text-slate-400 normal-case font-normal">(AI-generated, max 80 words)</span>
+              </label>
+              <span className={`text-xs tabular-nums ${overLimit ? "text-red-600 font-semibold" : "text-slate-400"}`}>
+                {introWords}/80 words
+              </span>
+            </div>
             <textarea
               value={intro}
               onChange={(e) => setIntro(e.target.value)}
               data-testid="edit-intro-input"
-              rows={3}
+              rows={5}
               className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/20 outline-none"
             />
           </div>
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Body</label>
-            <textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              data-testid="edit-body-input"
-              rows={9}
-              className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/20 outline-none"
-            />
+
+          <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-600">
+            <div className="font-semibold text-slate-700 mb-1">Fixed by template (not AI-generated):</div>
+            Company services description • Call to action • Signature • Attached company profile PDF
           </div>
         </div>
 

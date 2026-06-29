@@ -10,7 +10,7 @@ from typing import List, Optional
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Response, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
@@ -47,6 +47,18 @@ emails_col = db.cold_emails
 logs_col = db.send_logs
 settings_col = db.settings
 
+# ---------- PDF attachment ----------
+PDF_PATH = ROOT_DIR / "company_profile.pdf"
+
+
+def _build_pdf_attachment() -> list:
+    """Returns Resend-compatible attachments list (base64) if PDF exists, else []."""
+    if not PDF_PATH.exists():
+        return []
+    import base64
+    content = base64.b64encode(PDF_PATH.read_bytes()).decode("ascii")
+    return [{"filename": "SDU-Global-Company-Profile.pdf", "content": content}]
+
 # ---------- App ----------
 app = FastAPI(title="SDU Cold Email Outreach")
 api = APIRouter(prefix="/api")
@@ -62,7 +74,6 @@ class EmailDoc(BaseModel):
     notes: str = ""
     subject: str = ""
     intro: str = ""
-    body: str = ""
     status: str = "pending"  # pending|generated|sending|sent|failed
     provider: str = "resend"
     message_id: str = ""
@@ -86,7 +97,6 @@ class SendIn(BaseModel):
 class UpdateEmailIn(BaseModel):
     subject: Optional[str] = None
     intro: Optional[str] = None
-    body: Optional[str] = None
 
 
 class PasswordChangeIn(BaseModel):
@@ -186,7 +196,6 @@ async def _generate_one(doc: dict) -> dict:
         update = {
             "subject": gen.subject,
             "intro": gen.intro,
-            "body": gen.body,
             "status": "generated",
             "error": "",
         }
@@ -264,7 +273,7 @@ async def send(payload: SendIn, _user: str = Depends(require_session)):
         if doc.get("status") == "sent":
             results.append({"id": _id, "status": "sent", "message_id": doc.get("message_id", "")})
             continue
-        if not doc.get("subject") or not doc.get("body"):
+        if not doc.get("subject") or not doc.get("intro"):
             results.append({"id": _id, "status": "failed", "error": "Email not generated"})
             await emails_col.update_one({"id": _id}, {"$set": {"status": "failed", "error": "Not generated"}})
             continue
@@ -273,13 +282,15 @@ async def send(payload: SendIn, _user: str = Depends(require_session)):
             results.append({"id": _id, "status": "failed", "error": "Daily limit reached"})
             continue
 
-        gen = GeneratedEmail(subject=doc["subject"], intro=doc["intro"], body=doc["body"])
+        gen = GeneratedEmail(subject=doc["subject"], intro=doc["intro"])
         recipient_name = doc["company_name"]
         html = render_html(recipient_name, gen)
         plain = render_plain(recipient_name, gen)
+        attachments = _build_pdf_attachment()
 
         try:
-            msg_id = send_email(doc["contact_email"], gen.subject, html, plain)
+            msg_id = send_email(doc["contact_email"], gen.subject, html, plain,
+                                attachments=attachments)
             now = datetime.now(timezone.utc).isoformat()
             await emails_col.update_one({"id": _id}, {"$set": {
                 "status": "sent",
@@ -361,6 +372,14 @@ async def export_logs(_user: str = Depends(require_session)):
 @api.get("/settings")
 async def get_settings(_user: str = Depends(require_session)):
     gemini_ok = bool(os.environ.get("GEMINI_API_KEY", "").strip())
+    pdf_meta: dict = {"present": False, "size": 0}
+    if PDF_PATH.exists():
+        st = PDF_PATH.stat()
+        pdf_meta = {
+            "present": True,
+            "size": st.st_size,
+            "uploaded_at": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+        }
     return {
         "company_context": read_company_context(),
         "daily_limit": int(os.environ.get("DAILY_EMAIL_LIMIT", "200")),
@@ -368,6 +387,7 @@ async def get_settings(_user: str = Depends(require_session)):
         "from_name": os.environ.get("FROM_NAME", ""),
         "gemini_configured": gemini_ok,
         "resend": resend_status(),
+        "pdf": pdf_meta,
     }
 
 
@@ -408,6 +428,35 @@ async def change_password(payload: PasswordChangeIn, _user: str = Depends(requir
         new_lines.append(f'ADMIN_PASSWORD="{payload.new_password}"')
     env_path.write_text("\n".join(new_lines) + "\n")
     os.environ["ADMIN_PASSWORD"] = payload.new_password
+    return {"ok": True}
+
+
+# ---------- PDF management ----------
+@api.post("/settings/pdf")
+async def upload_pdf(file: UploadFile = File(...), _user: str = Depends(require_session)):
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "File must be a .pdf")
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(413, "PDF exceeds 10 MB")
+    if not data.startswith(b"%PDF"):
+        raise HTTPException(400, "File does not look like a valid PDF")
+    PDF_PATH.write_bytes(data)
+    return {"ok": True, "size": len(data)}
+
+
+@api.get("/settings/pdf")
+async def download_pdf(_user: str = Depends(require_session)):
+    if not PDF_PATH.exists():
+        raise HTTPException(404, "No PDF uploaded")
+    return FileResponse(PDF_PATH, media_type="application/pdf",
+                        filename="SDU-Global-Company-Profile.pdf")
+
+
+@api.delete("/settings/pdf")
+async def delete_pdf(_user: str = Depends(require_session)):
+    if PDF_PATH.exists():
+        PDF_PATH.unlink()
     return {"ok": True}
 
 

@@ -16,15 +16,17 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 CONTEXT_FILE = Path(__file__).parent / "company_context.txt"
+BODY_HTML_FILE = Path(__file__).parent / "email_body_template.html"
+BODY_TEXT_FILE = Path(__file__).parent / "email_body_template.txt"
 
 GEMINI_MODEL = "gemini-2.5-flash"
+INTRO_WORD_LIMIT = 80
 
 
 class GeneratedEmail(BaseModel):
-    """Strict schema returned by Gemini."""
+    """Strict schema returned by Gemini. Body is NEVER AI-generated — it's a fixed template."""
     subject: str = Field(description="Cold email subject line, 5-10 words.")
-    intro: str = Field(description="Personalized opening paragraph, 2-3 sentences.")
-    body: str = Field(description="Main body paragraph(s) explaining how SDU Global may help, 150-220 words total.")
+    intro: str = Field(description="Personalized opening paragraph, max 80 words, referencing the recipient company naturally. No greeting line, no signature.")
 
 
 def _get_client() -> genai.Client:
@@ -102,13 +104,11 @@ From name: {from_name}
 From email: {from_email}
 
 == TASK ==
-Return STRICT JSON with EXACTLY these three keys:
+Return STRICT JSON with EXACTLY these two keys:
   - "subject": 5-10 words, specific, no clickbait, no emojis.
-  - "intro": 2-3 sentences that reference the target company naturally. Avoid every cliché listed in the firm context.
-  - "body": 150-220 words. Briefly introduce SDU Global, highlight 1-2 relevant services for this company, and close with the call to action from the firm context.
+  - "intro": ONE short paragraph, MAX {INTRO_WORD_LIMIT} words, that personally addresses the recipient company. Naturally reference their industry/location/business type if known. Do NOT describe SDU Global's services, do NOT include a call to action, do NOT include greetings ("Dear..."), do NOT include sign-offs. The remainder of the email comes from a fixed template — your intro should flow naturally into a generic services paragraph.
 
-Do NOT include greetings ("Dear..."), signatures, or sign-offs in any field. Those are added by the template.
-Do NOT invent facts about the company. If you have no info, write a professional generic introduction.
+Do NOT invent facts about the company. If you have no info, write a professional generic opening instead.
 Output JSON only, nothing else.
 """
 
@@ -148,18 +148,32 @@ def generate_email(company_name: str, contact_email: str, notes: str, website: O
     email = GeneratedEmail(**data)
     # Trim safeties
     email.subject = email.subject.strip().strip('"').strip("'")
-    email.intro = email.intro.strip()
-    email.body = email.body.strip()
+    email.intro = _truncate_words(email.intro.strip(), INTRO_WORD_LIMIT)
     return email
 
 
+def _truncate_words(text: str, limit: int) -> str:
+    words = text.split()
+    if len(words) <= limit:
+        return text
+    return " ".join(words[:limit]).rstrip(",.;:") + "."
+
+
+def read_body_html() -> str:
+    return BODY_HTML_FILE.read_text(encoding="utf-8") if BODY_HTML_FILE.exists() else ""
+
+
+def read_body_text() -> str:
+    return BODY_TEXT_FILE.read_text(encoding="utf-8") if BODY_TEXT_FILE.exists() else ""
+
+
 def render_html(recipient_name: str, generated: GeneratedEmail) -> str:
-    """Wrap Gemini output in a fixed branded HTML template."""
+    """Wrap Gemini intro in a fixed branded HTML template. Body comes from email_body_template.html."""
     from_name = os.environ.get("FROM_NAME", "SDU Global Auditing")
     from_email = os.environ.get("FROM_EMAIL", "")
 
     intro_html = _paragraphs(generated.intro)
-    body_html = _paragraphs(generated.body)
+    body_html = read_body_html()
     greeting = f"Dear {recipient_name}," if recipient_name else "Hello,"
 
     return f"""<!doctype html>
@@ -179,10 +193,11 @@ def render_plain(recipient_name: str, generated: GeneratedEmail) -> str:
     from_name = os.environ.get("FROM_NAME", "SDU Global Auditing")
     from_email = os.environ.get("FROM_EMAIL", "")
     greeting = f"Dear {recipient_name}," if recipient_name else "Hello,"
+    body_text = read_body_text()
     return (
         f"{greeting}\n\n"
         f"{generated.intro}\n\n"
-        f"{generated.body}\n\n"
+        f"{body_text}\n\n"
         f"Best regards,\n{from_name}\n"
         f"SDU Global Auditing\nDubai, UAE\n{from_email}\n"
     )

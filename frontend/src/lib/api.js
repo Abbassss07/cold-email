@@ -36,3 +36,11 @@ export const updateContext = (content) => api.put("/settings/context", { content
 export const updateDailyLimit = (n) => api.put("/settings/daily-limit", { daily_limit: n });
 export const changePassword = (current_password, new_password) =>
   api.put("/settings/password", { current_password, new_password });
+
+export const uploadPdf = (file) => {
+  const form = new FormData();
+  form.append("file", file);
+  return api.post("/settings/pdf", form, { headers: { "Content-Type": "multipart/form-data" } });
+};
+export const deletePdf = () => api.delete("/settings/pdf");
+export const pdfDownloadUrl = `${API_BASE}/settings/pdf`;

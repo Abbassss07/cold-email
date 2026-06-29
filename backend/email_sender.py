@@ -18,8 +18,11 @@ def _ensure_key() -> str:
     return key
 
 
-def send_email(to_email: str, subject: str, html: str, text: Optional[str] = None) -> str:
-    """Send an email through Resend. Returns the provider message ID."""
+def send_email(to_email: str, subject: str, html: str, text: Optional[str] = None,
+               attachments: Optional[list] = None) -> str:
+    """Send an email through Resend. Returns the provider message ID.
+    attachments: list of {"filename": str, "content": base64-str} dicts.
+    """
     _ensure_key()
     from_email = os.environ.get("FROM_EMAIL", "").strip()
     from_name = os.environ.get("FROM_NAME", "").strip() or "SDU Global Auditing"
@@ -34,6 +37,8 @@ def send_email(to_email: str, subject: str, html: str, text: Optional[str] = Non
     }
     if text:
         params["text"] = text
+    if attachments:
+        params["attachments"] = attachments
 
     result = resend.Emails.send(params)
     # Resend returns dict-like with 'id'

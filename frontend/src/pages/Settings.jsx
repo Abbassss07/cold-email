@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, XCircle } from "lucide-react";
+import { CheckCircle2, XCircle, FileText, Upload, Trash2, Download } from "lucide-react";
 import {
   changePassword,
+  deletePdf,
   getSettings,
+  pdfDownloadUrl,
   updateContext,
   updateDailyLimit,
+  uploadPdf,
 } from "@/lib/api";
 
 export default function Settings() {
@@ -76,6 +79,8 @@ export default function Settings() {
             From: <span className="font-mono">{data.from_name} &lt;{data.from_email}&gt;</span>
           </div>
         </Card>
+
+        <PdfCard pdf={data.pdf} onChanged={load} />
 
         <Card title="Daily send limit">
           <input
@@ -170,6 +175,98 @@ function ProviderRow({ label, ok }) {
           <XCircle size={14} strokeWidth={1.8} /> Not configured
         </span>
       )}
+    </div>
+  );
+}
+
+function PdfCard({ pdf, onChanged }) {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+
+  const handle = async (file) => {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      toast.error("Please choose a .pdf file");
+      return;
+    }
+    setBusy(true);
+    try {
+      await uploadPdf(file);
+      toast.success("Company profile PDF updated");
+      onChanged?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!window.confirm("Remove the attached company profile PDF?")) return;
+    try {
+      await deletePdf();
+      toast.success("PDF removed");
+      onChanged?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Delete failed");
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-[0_2px_10px_rgba(0,0,0,0.04)] p-6" data-testid="settings-pdf-card">
+      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 mb-4">Company profile PDF</div>
+      {pdf?.present ? (
+        <div className="flex items-start gap-3 mb-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
+          <div className="w-9 h-9 rounded-lg bg-[#2563EB] text-white flex items-center justify-center flex-shrink-0">
+            <FileText size={18} strokeWidth={1.6} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-slate-900 truncate">Attached to every email</div>
+            <div className="text-xs text-slate-500 tabular-nums">{Math.round((pdf.size || 0) / 1024)} KB</div>
+          </div>
+        </div>
+      ) : (
+        <div className="text-sm text-slate-500 mb-3 p-3 rounded-xl bg-amber-50 border border-amber-200" data-testid="pdf-empty-state">
+          No PDF uploaded yet. Emails will be sent without an attachment.
+        </div>
+      )}
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".pdf,application/pdf"
+        className="hidden"
+        data-testid="pdf-upload-input"
+        onChange={(e) => handle(e.target.files?.[0])}
+      />
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+          data-testid="pdf-upload-button"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-[#2563EB] hover:bg-[#1D4ED8] text-white transition-all hover:-translate-y-[1px]"
+        >
+          <Upload size={14} strokeWidth={1.8} /> {busy ? "Uploading…" : pdf?.present ? "Replace" : "Upload"}
+        </button>
+        {pdf?.present && (
+          <>
+            <a
+              href={pdfDownloadUrl}
+              data-testid="pdf-download-link"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition-all"
+            >
+              <Download size={14} strokeWidth={1.8} /> Preview
+            </a>
+            <button
+              onClick={remove}
+              data-testid="pdf-delete-button"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border border-red-200 bg-white text-red-700 hover:bg-red-50 transition-all"
+            >
+              <Trash2 size={14} strokeWidth={1.8} /> Remove
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
