@@ -27,6 +27,7 @@ from auth import (  # noqa: E402
 from csv_handler import parse_csv  # noqa: E402
 from email_generator import (  # noqa: E402
     GeneratedEmail,
+    fetch_website_summary,
     generate_email,
     read_company_context,
     render_html,
@@ -34,6 +35,7 @@ from email_generator import (  # noqa: E402
     write_company_context,
 )
 from email_sender import check_status as resend_status, send_email  # noqa: E402
+from greeting import build_greeting  # noqa: E402
 from rate_limiter import allow, daily_count, daily_increment  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -46,6 +48,7 @@ db = client[os.environ["DB_NAME"]]
 emails_col = db.cold_emails
 logs_col = db.send_logs
 settings_col = db.settings
+website_cache_col = db.website_cache
 
 # ---------- PDF attachment ----------
 PDF_PATH = ROOT_DIR / "company_profile.pdf"
@@ -70,7 +73,9 @@ class EmailDoc(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     company_name: str
     contact_email: EmailStr
+    contact_name: str = ""
     website: str = ""
+    industry: str = ""
     notes: str = ""
     subject: str = ""
     intro: str = ""
@@ -78,6 +83,7 @@ class EmailDoc(BaseModel):
     provider: str = "resend"
     message_id: str = ""
     error: str = ""
+    gen_ms: int = 0
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     sent_at: Optional[str] = None
 
@@ -110,6 +116,41 @@ class ContextIn(BaseModel):
 
 class LimitIn(BaseModel):
     daily_limit: int
+
+
+# Whitelist of env keys editable via Settings UI
+EDITABLE_ENV_KEYS = {
+    "COMPANY_NAME", "FROM_NAME", "FROM_EMAIL", "DESIGNATION",
+    "PHONE", "COMPANY_WEBSITE", "GEMINI_API_KEY", "RESEND_API_KEY",
+}
+
+
+class EnvIn(BaseModel):
+    updates: dict[str, str]
+
+
+def _update_env_file(updates: dict[str, str]) -> None:
+    """Safely update only specified keys in .env; never touch others."""
+    env_path = ROOT_DIR / ".env"
+    lines = env_path.read_text().splitlines() if env_path.exists() else []
+    seen: set[str] = set()
+    out: list[str] = []
+    for ln in lines:
+        if "=" in ln and not ln.lstrip().startswith("#"):
+            k = ln.split("=", 1)[0].strip()
+            if k in updates:
+                # escape double quotes inside the value
+                v = updates[k].replace('"', '\\"')
+                out.append(f'{k}="{v}"')
+                seen.add(k)
+                continue
+        out.append(ln)
+    for k, v in updates.items():
+        if k not in seen:
+            out.append(f'{k}="{v.replace(chr(34), chr(92) + chr(34))}"')
+    env_path.write_text("\n".join(out) + "\n")
+    for k, v in updates.items():
+        os.environ[k] = v
 
 
 # ---------- Auth ----------
@@ -149,7 +190,9 @@ async def upload_csv(file: UploadFile = File(...), _user: str = Depends(require_
         docs.append(EmailDoc(
             company_name=row["company_name"],
             contact_email=row["contact_email"],
+            contact_name=row.get("contact_name", ""),
             website=row.get("website", ""),
+            industry=row.get("industry", ""),
             notes=row.get("notes", ""),
         ))
     if docs:
@@ -179,25 +222,62 @@ async def stats(_user: str = Depends(require_session)):
         counts[row["_id"]] = row["n"]
     total = sum(counts.values())
     counts["total"] = total
+    counts["draft"] = counts["generated"]  # alias
     counts["daily_sent"] = daily_count("sent")
     counts["daily_limit"] = int(os.environ.get("DAILY_EMAIL_LIMIT", "200"))
+
+    # Today's emails (created today UTC)
+    today_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    counts["today"] = await emails_col.count_documents({"created_at": {"$regex": f"^{today_prefix}"}})
+
+    # Success rate
+    sent_or_failed = counts["sent"] + counts["failed"]
+    counts["success_rate"] = round(counts["sent"] * 100.0 / sent_or_failed, 1) if sent_or_failed else 0.0
+
+    # Average Gemini generation time
+    pipe2 = [{"$match": {"gen_ms": {"$gt": 0}}},
+             {"$group": {"_id": None, "avg": {"$avg": "$gen_ms"}}}]
+    avg_ms = 0
+    async for row in emails_col.aggregate(pipe2):
+        avg_ms = int(row.get("avg") or 0)
+    counts["avg_gen_ms"] = avg_ms
     return counts
 
 
 # ---------- Generation ----------
+async def _get_website_summary(website: str) -> Optional[str]:
+    """Return cached summary or fetch+cache. Never scrape same URL twice."""
+    if not website:
+        return None
+    cached = await website_cache_col.find_one({"url": website}, {"_id": 0})
+    if cached:
+        return cached.get("summary") or None
+    summary = fetch_website_summary(website)
+    await website_cache_col.insert_one({
+        "url": website,
+        "summary": summary or "",
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return summary
+
+
 async def _generate_one(doc: dict) -> dict:
     try:
-        gen = generate_email(
+        website_summary = await _get_website_summary(doc.get("website") or "")
+        result = generate_email(
             company_name=doc["company_name"],
+            contact_name=doc.get("contact_name", ""),
             contact_email=doc["contact_email"],
+            industry=doc.get("industry", ""),
             notes=doc.get("notes", ""),
-            website=doc.get("website") or None,
+            website_summary=website_summary,
         )
         update = {
-            "subject": gen.subject,
-            "intro": gen.intro,
+            "subject": result.email.subject,
+            "intro": result.email.intro,
             "status": "generated",
             "error": "",
+            "gen_ms": result.elapsed_ms,
         }
     except Exception as e:
         logger.exception("Generation failed for %s", doc.get("id"))
@@ -283,9 +363,9 @@ async def send(payload: SendIn, _user: str = Depends(require_session)):
             continue
 
         gen = GeneratedEmail(subject=doc["subject"], intro=doc["intro"])
-        recipient_name = doc["company_name"]
-        html = render_html(recipient_name, gen)
-        plain = render_plain(recipient_name, gen)
+        greeting = build_greeting(doc.get("contact_name", ""), doc["contact_email"])
+        html = render_html(greeting, gen, doc["company_name"])
+        plain = render_plain(greeting, gen, doc["company_name"])
         attachments = _build_pdf_attachment()
 
         try:
@@ -307,6 +387,7 @@ async def send(payload: SendIn, _user: str = Depends(require_session)):
                 "status": "sent",
                 "provider": "resend",
                 "message_id": msg_id,
+                "gen_ms": doc.get("gen_ms", 0),
                 "timestamp": now,
                 "error": "",
             })
@@ -385,6 +466,10 @@ async def get_settings(_user: str = Depends(require_session)):
         "daily_limit": int(os.environ.get("DAILY_EMAIL_LIMIT", "200")),
         "from_email": os.environ.get("FROM_EMAIL", ""),
         "from_name": os.environ.get("FROM_NAME", ""),
+        "company_name": os.environ.get("COMPANY_NAME", ""),
+        "designation": os.environ.get("DESIGNATION", ""),
+        "phone": os.environ.get("PHONE", ""),
+        "company_website": os.environ.get("COMPANY_WEBSITE", ""),
         "gemini_configured": gemini_ok,
         "resend": resend_status(),
         "pdf": pdf_meta,
@@ -397,6 +482,19 @@ async def set_context(payload: ContextIn, _user: str = Depends(require_session))
         raise HTTPException(413, "Context too large")
     write_company_context(payload.content)
     return {"ok": True}
+
+
+@api.put("/settings/env")
+async def update_env(payload: EnvIn, _user: str = Depends(require_session)):
+    bad = [k for k in payload.updates if k not in EDITABLE_ENV_KEYS]
+    if bad:
+        raise HTTPException(400, f"Not editable: {', '.join(bad)}")
+    # Trim values; treat empty string as "unset" (keep current)
+    cleaned = {k: (v or "").strip() for k, v in payload.updates.items() if v is not None}
+    if not cleaned:
+        return {"ok": True}
+    _update_env_file(cleaned)
+    return {"ok": True, "updated": list(cleaned.keys())}
 
 
 @api.put("/settings/daily-limit")
@@ -413,21 +511,7 @@ async def change_password(payload: PasswordChangeIn, _user: str = Depends(requir
         raise HTTPException(401, "Current password incorrect")
     if len(payload.new_password) < 6:
         raise HTTPException(400, "New password must be at least 6 characters")
-    # update .env in place
-    env_path = ROOT_DIR / ".env"
-    lines = env_path.read_text().splitlines()
-    new_lines = []
-    replaced = False
-    for ln in lines:
-        if ln.startswith("ADMIN_PASSWORD="):
-            new_lines.append(f'ADMIN_PASSWORD="{payload.new_password}"')
-            replaced = True
-        else:
-            new_lines.append(ln)
-    if not replaced:
-        new_lines.append(f'ADMIN_PASSWORD="{payload.new_password}"')
-    env_path.write_text("\n".join(new_lines) + "\n")
-    os.environ["ADMIN_PASSWORD"] = payload.new_password
+    _update_env_file({"ADMIN_PASSWORD": payload.new_password})
     return {"ok": True}
 
 

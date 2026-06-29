@@ -34,6 +34,7 @@ export const exportLogsUrl = `${API_BASE}/logs/export`;
 export const getSettings = () => api.get("/settings");
 export const updateContext = (content) => api.put("/settings/context", { content });
 export const updateDailyLimit = (n) => api.put("/settings/daily-limit", { daily_limit: n });
+export const updateEnv = (updates) => api.put("/settings/env", { updates });
 export const changePassword = (current_password, new_password) =>
   api.put("/settings/password", { current_password, new_password });
 

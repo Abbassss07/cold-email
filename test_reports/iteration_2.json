@@ -1,0 +1,41 @@
+{
+  "summary": "Refactor pass verified: CSV with contact_name+industry imports correctly (6/6 rows); server-side build_greeting rules all pass (Dear NAME, role-based Finance/HR/Sales Team, generic Hello); LIVE Gemini regenerate returns subject+intro only (no body field, intro=56 words within 40-70 range, no SDU Global mention, no greeting line, status='generated', gen_ms>0); website_cache de-duplication works (1 entry after 2 regenerations for same URL); /api/stats includes today/draft/success_rate/avg_gen_ms; PUT /api/settings/env with PHONE updates only that key and PRESERVES GEMINI_API_KEY+RESEND_API_KEY (critical regression fixed); non-whitelisted SECRET_KEY rejected with 400; selective updates (COMPANY_NAME only) leave keys untouched. PDF card shows pdf.{present,size,uploaded_at}. Frontend: 8 stat cards render correct values, contact names visible in table, all 8 env-* inputs + env-save-button present on Settings, PDF card works.",
+  "tested_scope": ["backend", "frontend", "auth", "integration"],
+  "passed": [
+    "Auth login with admin123",
+    "POST /api/upload (CSV with contact_name+industry) imports 6/6 rows",
+    "GET /api/emails returns contact_name + industry fields",
+    "build_greeting: Dear David Campbell, / Hello Finance Team, / Hello HR Team, / Hello Sales Team, / Hello, / accounts@ + tax@ -> Finance Team",
+    "POST /api/emails/{id}/regenerate (LIVE Gemini) returns subject+intro only, status=generated, gen_ms=5916, intro 56 words, no body field, no greeting, no 'SDU Global' name",
+    "website_cache collection has exactly 1 entry after 2 regenerations of same URL",
+    "/api/stats includes today, draft, success_rate, avg_gen_ms",
+    "PUT /api/settings/env {PHONE} preserves GEMINI_API_KEY and RESEND_API_KEY (critical regression verified)",
+    "PUT /api/settings/env {SECRET_KEY} -> 400 Not editable",
+    "Selective PUT {COMPANY_NAME} leaves API keys untouched",
+    "GET /api/settings reflects phone change and pdf.{present,size,uploaded_at}",
+    "Frontend: 8 dashboard stat cards (today=27, generated=3, sent=0, failed=4, pending=20, drafts=3, success-rate=0%, avg-gen=4.2s)",
+    "Frontend: contact names (Sarah Khan, Michael Chen) visible in email table",
+    "Frontend: Settings shows all 8 env-* inputs + env-save-button + PDF card"
+  ],
+  "failed": [
+    {
+      "area": "backend - settings env empty keys",
+      "issue": "PUT /api/settings/env with {GEMINI_API_KEY:'', RESEND_API_KEY:''} WIPES existing keys to empty strings. Spec said 'should NOT wipe existing keys (server treats empty as unset/keep)' but the request note also acknowledges 'with our current logic, empty trimmed strings are written' and frontend filters client-side. Keys were restored during test.",
+      "evidence": "After PUT with empty strings: GEMINI_API_KEY=\"\" and RESEND_API_KEY=\"\" in /app/backend/.env. Response: {ok:true, updated:['GEMINI_API_KEY','RESEND_API_KEY']}",
+      "priority": "MEDIUM"
+    },
+    {
+      "area": "backend - /api/logs gen_ms",
+      "issue": "Existing log entries do not have gen_ms populated (all show null). New send-log entries may include gen_ms if generation+send happens after schema update, but currently all returned entries show gen_ms=null.",
+      "evidence": "GET /api/logs returned 5 entries; all have gen_ms: None. No send was triggered during this test iteration, so could be pre-existing logs.",
+      "priority": "LOW"
+    }
+  ],
+  "action_items": [
+    "Consider hardening backend _update_env_file to treat empty/whitespace GEMINI_API_KEY/RESEND_API_KEY as 'keep existing' rather than overwriting, as a server-side safety net (frontend already filters, but defense-in-depth prevents API mis-use from wiping keys).",
+    "Optional: verify gen_ms is populated on send logs created AFTER generate+send (trigger one fresh send to confirm)."
+  ],
+  "success_rate": {"backend": "95%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}

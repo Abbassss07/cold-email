@@ -8,6 +8,7 @@ import {
   pdfDownloadUrl,
   updateContext,
   updateDailyLimit,
+  updateEnv,
   uploadPdf,
 } from "@/lib/api";
 
@@ -130,6 +131,8 @@ export default function Settings() {
         </Card>
       </div>
 
+      <FirmProfileCard data={data} onSaved={load} />
+
       <Card title="Company context (used by Gemini)" wide>
         <textarea
           value={context}
@@ -175,6 +178,86 @@ function ProviderRow({ label, ok }) {
           <XCircle size={14} strokeWidth={1.8} /> Not configured
         </span>
       )}
+    </div>
+  );
+}
+
+function FirmProfileCard({ data, onSaved }) {
+  const [form, setForm] = useState({
+    COMPANY_NAME: data.company_name || "",
+    FROM_NAME: data.from_name || "",
+    FROM_EMAIL: data.from_email || "",
+    DESIGNATION: data.designation || "",
+    PHONE: data.phone || "",
+    COMPANY_WEBSITE: data.company_website || "",
+    GEMINI_API_KEY: "",
+    RESEND_API_KEY: "",
+  });
+  const [busy, setBusy] = useState(false);
+
+  const f = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      // Only send non-empty fields. Empty API key fields are skipped (preserve existing).
+      const updates = {};
+      Object.entries(form).forEach(([k, v]) => {
+        if (k === "GEMINI_API_KEY" || k === "RESEND_API_KEY") {
+          if (v.trim()) updates[k] = v.trim();
+        } else {
+          updates[k] = v;
+        }
+      });
+      await updateEnv(updates);
+      toast.success("Saved firm profile");
+      setForm({ ...form, GEMINI_API_KEY: "", RESEND_API_KEY: "" });
+      onSaved?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const Field = ({ k, label, type = "text", placeholder, help }) => (
+    <div>
+      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">{label}</label>
+      <input
+        type={type}
+        value={form[k]}
+        onChange={f(k)}
+        placeholder={placeholder}
+        data-testid={`env-${k.toLowerCase()}`}
+        className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/20 outline-none"
+      />
+      {help && <div className="text-xs text-slate-400 mt-1">{help}</div>}
+    </div>
+  );
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-[0_2px_10px_rgba(0,0,0,0.04)] p-6">
+      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 mb-4">Firm profile (used in email signature & API access)</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Field k="COMPANY_NAME" label="Company name" placeholder="SDU Global Auditing" />
+        <Field k="FROM_NAME" label="From name" placeholder="Mohammed Abbas" />
+        <Field k="FROM_EMAIL" label="From email" placeholder="outreach@yourdomain.ae" help="Must be on a Resend-verified domain" />
+        <Field k="DESIGNATION" label="Designation" placeholder="Business Advisory" />
+        <Field k="PHONE" label="Phone" placeholder="+971 4 000 0000" />
+        <Field k="COMPANY_WEBSITE" label="Website" placeholder="https://sduglobal.ae" />
+        <Field k="GEMINI_API_KEY" label="Gemini API key" type="password" placeholder="Leave blank to keep current" help="Get from https://aistudio.google.com/app/apikey" />
+        <Field k="RESEND_API_KEY" label="Resend API key" type="password" placeholder="Leave blank to keep current" help="Get from https://resend.com/api-keys" />
+      </div>
+      <div className="mt-5 flex justify-end">
+        <button
+          onClick={save}
+          disabled={busy}
+          data-testid="env-save-button"
+          className="bg-[#2563EB] hover:bg-[#1D4ED8] text-white rounded-xl px-5 py-2.5 text-sm font-medium transition-all hover:-translate-y-[1px]"
+        >
+          {busy ? "Saving…" : "Save firm profile"}
+        </button>
+      </div>
     </div>
   );
 }

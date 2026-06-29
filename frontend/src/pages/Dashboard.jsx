@@ -148,10 +148,16 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatsCard label="Today" value={stats.today || 0} testId="stat-today" />
         <StatsCard label="Generated" value={stats.generated} accent="blue" testId="stat-generated" />
         <StatsCard label="Sent" value={stats.sent} accent="green" testId="stat-sent" />
         <StatsCard label="Failed" value={stats.failed} accent="red" testId="stat-failed" />
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatsCard label="Pending" value={stats.pending} accent="amber" testId="stat-pending" />
+        <StatsCard label="Drafts" value={stats.draft || 0} testId="stat-draft" />
+        <StatsCard label="Success rate" value={`${stats.success_rate || 0}%`} accent="green" testId="stat-success-rate" />
+        <StatsCard label="Avg gen time" value={`${((stats.avg_gen_ms || 0) / 1000).toFixed(1)}s`} accent="blue" testId="stat-avg-gen" />
       </div>
 
       <UploadZone onImported={onImported} />
@@ -207,7 +213,7 @@ export default function Dashboard() {
                            data-testid="select-all-checkbox" />
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Company</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Email</th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Contact</th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Subject</th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
                   <th className="px-6 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
@@ -220,8 +226,14 @@ export default function Dashboard() {
                       <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleOne(e.id)}
                              data-testid={`row-checkbox-${e.id}`} />
                     </td>
-                    <td className="px-6 py-4 text-sm font-medium text-slate-900">{e.company_name}</td>
-                    <td className="px-6 py-4 text-sm text-slate-600 font-mono text-xs">{e.contact_email}</td>
+                    <td className="px-6 py-4 text-sm font-medium text-slate-900">
+                      <div>{e.company_name}</div>
+                      {e.industry && <div className="text-[11px] text-slate-400 mt-0.5">{e.industry}</div>}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-600">
+                      {e.contact_name && <div className="font-medium text-slate-800">{e.contact_name}</div>}
+                      <div className="font-mono text-xs text-slate-500">{e.contact_email}</div>
+                    </td>
                     <td className="px-6 py-4 text-sm text-slate-700 max-w-md truncate">{e.subject || <span className="text-slate-400 italic">— not generated —</span>}</td>
                     <td className="px-6 py-4"><StatusBadge status={e.status} /></td>
                     <td className="px-6 py-4">

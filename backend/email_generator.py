@@ -88,10 +88,14 @@ def fetch_website_summary(website: str, timeout: int = 6) -> Optional[str]:
     locality = _meta("og:locality") or _meta("geo.placename")
 
     parts = []
-    if title: parts.append(f"Title: {title}")
-    if site_name: parts.append(f"Site name: {site_name}")
-    if description: parts.append(f"Description: {description}")
-    if locality: parts.append(f"Location: {locality}")
+    if title:
+        parts.append(f"Title: {title}")
+    if site_name:
+        parts.append(f"Site name: {site_name}")
+    if description:
+        parts.append(f"Description: {description}")
+    if locality:
+        parts.append(f"Location: {locality}")
     summary = "\n".join(parts)
     if not summary:
         return None
@@ -127,7 +131,7 @@ Firm context (do not contradict):
 
 Return JSON: {{"subject":"...","intro":"..."}}
 - subject: 5-10 words, specific, no clickbait, no emojis.
-- intro: ONE paragraph, {INTRO_MIN_WORDS}-{INTRO_MAX_WORDS} words. Naturally reference the company / industry. Do NOT describe our services, do NOT add a CTA, do NOT include a greeting or sign-off. Avoid clichés ("I hope this email finds you well", "in today's fast-paced...").
+- intro: ONE paragraph, {INTRO_MIN_WORDS}-{INTRO_MAX_WORDS} words. Talk ABOUT the recipient's company/industry — observations or relevant context. Do NOT mention our firm by name, do NOT describe our services, do NOT add a CTA, do NOT include a greeting or sign-off, do NOT start with "I hope this email finds you well" or similar clichés. Be specific where info exists; if not, stay professional and general.
 """
 
 
