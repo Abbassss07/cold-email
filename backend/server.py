@@ -484,15 +484,25 @@ async def set_context(payload: ContextIn, _user: str = Depends(require_session))
     return {"ok": True}
 
 
+# Keys whose existing value must be preserved if the new value is empty
+PROTECTED_IF_EMPTY = {"GEMINI_API_KEY", "RESEND_API_KEY", "FROM_EMAIL"}
+
+
 @api.put("/settings/env")
 async def update_env(payload: EnvIn, _user: str = Depends(require_session)):
     bad = [k for k in payload.updates if k not in EDITABLE_ENV_KEYS]
     if bad:
         raise HTTPException(400, f"Not editable: {', '.join(bad)}")
-    # Trim values; treat empty string as "unset" (keep current)
-    cleaned = {k: (v or "").strip() for k, v in payload.updates.items() if v is not None}
+    cleaned: dict[str, str] = {}
+    for k, v in payload.updates.items():
+        if v is None:
+            continue
+        val = v.strip()
+        if not val and k in PROTECTED_IF_EMPTY:
+            continue  # never wipe sensitive keys with an empty value
+        cleaned[k] = val
     if not cleaned:
-        return {"ok": True}
+        return {"ok": True, "updated": []}
     _update_env_file(cleaned)
     return {"ok": True, "updated": list(cleaned.keys())}
 
