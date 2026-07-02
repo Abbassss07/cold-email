@@ -45,3 +45,17 @@ export const uploadPdf = (file) => {
 };
 export const deletePdf = () => api.delete("/settings/pdf");
 export const pdfDownloadUrl = `${API_BASE}/settings/pdf`;
+
+// CRM
+export const getCrmMeta = () => api.get("/crm/meta");
+export const getLead = (id) => api.get(`/leads/${id}`);
+export const updateLead = (id, data) => api.patch(`/leads/${id}`, data);
+export const getLeadTimeline = (id) => api.get(`/leads/${id}/timeline`);
+export const getPipeline = () => api.get("/pipeline");
+export const getDashboardSummary = () => api.get("/dashboard/summary");
+export const listTasks = (params = {}) => api.get("/tasks", { params });
+export const createTask = (data) => api.post("/tasks", data);
+export const updateTask = (id, data) => api.patch(`/tasks/${id}`, data);
+export const deleteTask = (id) => api.delete(`/tasks/${id}`);
+export const listMeetings = (lead_id) => api.get("/meetings", { params: lead_id ? { lead_id } : {} });
+export const createMeeting = (data) => api.post("/meetings", data);

@@ -37,6 +37,7 @@ from email_generator import (  # noqa: E402
 from email_sender import check_status as resend_status, send_email  # noqa: E402
 from greeting import build_greeting  # noqa: E402
 from rate_limiter import allow, daily_count, daily_increment  # noqa: E402
+from crm import add_timeline, bind_db, crm as crm_router  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("sdu")
@@ -49,6 +50,10 @@ emails_col = db.cold_emails
 logs_col = db.send_logs
 settings_col = db.settings
 website_cache_col = db.website_cache
+tasks_col = db.tasks
+meetings_col = db.meetings
+timeline_col = db.timeline
+bind_db(emails_col, tasks_col, meetings_col, timeline_col, logs_col)
 
 # ---------- PDF attachment ----------
 PDF_PATH = ROOT_DIR / "company_profile.pdf"
@@ -77,6 +82,12 @@ class EmailDoc(BaseModel):
     website: str = ""
     industry: str = ""
     notes: str = ""
+    country: str = ""
+    phone: str = ""
+    stage: str = "new_lead"
+    services: list[str] = Field(default_factory=list)
+    internal_notes: str = ""
+    last_contact_at: Optional[str] = None
     subject: str = ""
     intro: str = ""
     status: str = "pending"  # pending|generated|sending|sent|failed
@@ -276,6 +287,7 @@ async def _generate_one(doc: dict) -> dict:
             "subject": result.email.subject,
             "intro": result.email.intro,
             "status": "generated",
+            "stage": "email_generated",
             "error": "",
             "gen_ms": result.elapsed_ms,
         }
@@ -283,6 +295,9 @@ async def _generate_one(doc: dict) -> dict:
         logger.exception("Generation failed for %s", doc.get("id"))
         update = {"status": "failed", "error": f"Gemini: {e}"}
     await emails_col.update_one({"id": doc["id"]}, {"$set": update})
+    if update.get("status") == "generated":
+        await add_timeline(doc["id"], "email_generated",
+                           f"Email generated: {result.email.subject}")
     return update
 
 
@@ -374,10 +389,14 @@ async def send(payload: SendIn, _user: str = Depends(require_session)):
             now = datetime.now(timezone.utc).isoformat()
             await emails_col.update_one({"id": _id}, {"$set": {
                 "status": "sent",
+                "stage": "email_sent",
                 "message_id": msg_id,
                 "sent_at": now,
+                "last_contact_at": now,
                 "error": "",
             }})
+            await add_timeline(_id, "email_sent", f"Email sent to {doc['contact_email']}",
+                               f"Subject: {gen.subject}")
             await logs_col.insert_one({
                 "id": str(uuid.uuid4()),
                 "email_id": _id,
@@ -556,6 +575,7 @@ async def delete_pdf(_user: str = Depends(require_session)):
 
 # ---------- Wire up ----------
 app.include_router(api)
+app.include_router(crm_router)
 
 app.add_middleware(
     CORSMiddleware,

@@ -21,6 +21,9 @@ export default function EmailEditDialog({ email, open, onClose, onChanged }) {
 
   if (!email) return null;
 
+  const introWords = intro.trim() ? intro.trim().split(/\s+/).length : 0;
+  const overLimit = introWords > 80;
+
   const save = async () => {
     setBusy(true);
     try {

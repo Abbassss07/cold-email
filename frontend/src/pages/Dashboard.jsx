@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Eye, Sparkles, Send, Trash2, RefreshCw, Mail, Inbox } from "lucide-react";
 import { toast } from "sonner";
 import StatsCard from "@/components/StatsCard";
@@ -15,6 +16,7 @@ import {
 } from "@/lib/api";
 
 export default function Dashboard() {
+  const nav = useNavigate();
   const [emails, setEmails] = useState([]);
   const [stats, setStats] = useState({ pending: 0, generated: 0, sent: 0, failed: 0, total: 0 });
   const [selected, setSelected] = useState(new Set());
@@ -226,8 +228,8 @@ export default function Dashboard() {
                       <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleOne(e.id)}
                              data-testid={`row-checkbox-${e.id}`} />
                     </td>
-                    <td className="px-6 py-4 text-sm font-medium text-slate-900">
-                      <div>{e.company_name}</div>
+                    <td className="px-6 py-4 text-sm font-medium text-slate-900 cursor-pointer" onClick={() => nav(`/leads/${e.id}`)} data-testid={`open-lead-${e.id}`}>
+                      <div className="hover:text-[#2563EB] transition-colors">{e.company_name}</div>
                       {e.industry && <div className="text-[11px] text-slate-400 mt-0.5">{e.industry}</div>}
                     </td>
                     <td className="px-6 py-4 text-sm text-slate-600">

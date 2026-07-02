@@ -7,6 +7,7 @@ import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Logs from "@/pages/Logs";
 import Settings from "@/pages/Settings";
+import LeadProfile from "@/pages/LeadProfile";
 import Layout from "@/components/Layout";
 
 function Protected({ children, authed }) {
@@ -49,6 +50,7 @@ export default function App() {
             }
           >
             <Route path="/" element={<Dashboard />} />
+            <Route path="/leads/:id" element={<LeadProfile />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
