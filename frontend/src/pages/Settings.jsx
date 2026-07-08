@@ -1,4 +1,16 @@
 import { useEffect, useRef, useState } from "react";
+function EnvField({ k, label, type = "text", placeholder, help, value, onChange }) {
+  return (
+    <div>
+      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">{label}</label>
+      <input type={type} value={value} onChange={onChange} placeholder={placeholder}
+        data-testid={`env-${k.toLowerCase()}`}
+        className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/20 outline-none" />
+      {help && <div className="text-xs text-slate-400 mt-1">{help}</div>}
+    </div>
+  );
+}
+
 import { toast } from "sonner";
 import { CheckCircle2, XCircle, FileText, Upload, Trash2, Download } from "lucide-react";
 import {
@@ -194,13 +206,11 @@ function FirmProfileCard({ data, onSaved }) {
     RESEND_API_KEY: "",
   });
   const [busy, setBusy] = useState(false);
-
   const f = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   const save = async () => {
     setBusy(true);
     try {
-      // Only send non-empty fields. Empty API key fields are skipped (preserve existing).
       const updates = {};
       Object.entries(form).forEach(([k, v]) => {
         if (k === "GEMINI_API_KEY" || k === "RESEND_API_KEY") {
@@ -221,18 +231,7 @@ function FirmProfileCard({ data, onSaved }) {
   };
 
   const Field = ({ k, label, type = "text", placeholder, help }) => (
-    <div>
-      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">{label}</label>
-      <input
-        type={type}
-        value={form[k]}
-        onChange={f(k)}
-        placeholder={placeholder}
-        data-testid={`env-${k.toLowerCase()}`}
-        className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:border-[#2563EB] focus:ring-2 focus:ring-blue-500/20 outline-none"
-      />
-      {help && <div className="text-xs text-slate-400 mt-1">{help}</div>}
-    </div>
+    <EnvField k={k} label={label} type={type} placeholder={placeholder} help={help} value={form[k]} onChange={f(k)} />
   );
 
   return (
