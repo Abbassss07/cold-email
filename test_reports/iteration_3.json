@@ -1,0 +1,26 @@
+{
+  "summary": "Verified fix for missing app.include_router(api). Login now returns 200 (previously 404). All main /api/* endpoints, CRM endpoints, webhook, and live Resend test-send all pass. Frontend login flow works end-to-end: /login -> submit admin123 -> redirect to / dashboard with stats visible.",
+  "tested_scope": ["backend", "frontend", "auth", "integration"],
+  "passed": [
+    "POST /api/auth/login (200, {ok:true}, cookie set)",
+    "GET /api/auth/me (200, {user:'admin'})",
+    "GET /api/stats (200, 27 total, counts present)",
+    "GET /api/emails (200, array)",
+    "GET /api/settings (200, company_context present)",
+    "GET /api/pipeline (200, 10 stages)",
+    "GET /api/dashboard/summary (200, aggregates)",
+    "GET /api/leads/{id} (200)",
+    "PATCH /api/leads/{id} stage change (200)",
+    "GET /api/leads/{id}/timeline (200)",
+    "POST /api/tasks (200)",
+    "POST /api/emails/{id}/test-send (200, live Resend message_id returned)",
+    "POST /api/webhooks/resend public (200, {ok:true})",
+    "Frontend login flow: password admin123 -> redirected from /login to / with nav-dashboard visible and 'Welcome back' toast"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "notes": "Two pre-login 401s from /api/auth/me are expected (auth check before login). No regressions found. Router fix confirmed working."
+}

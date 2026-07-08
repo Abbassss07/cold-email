@@ -629,6 +629,7 @@ async def resend_webhook(payload: dict):
 
 
 
+app.include_router(api)
 app.include_router(crm_router)
 
 app.add_middleware(
