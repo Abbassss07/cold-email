@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { regenerate, updateEmail } from "@/lib/api";
-import { RefreshCw, Save } from "lucide-react";
+import { regenerate, sendTest, updateEmail } from "@/lib/api";
+import { RefreshCw, Save, Send } from "lucide-react";
 
 export default function EmailEditDialog({ email, open, onClose, onChanged }) {
   const [subject, setSubject] = useState("");
@@ -97,6 +97,20 @@ export default function EmailEditDialog({ email, open, onClose, onChanged }) {
         </div>
 
         <DialogFooter className="mt-4 gap-2">
+          <button
+            onClick={async () => {
+              try {
+                const { data } = await sendTest(email.id);
+                toast.success(`Test sent to ${data.to}`);
+              } catch (e) {
+                toast.error(e?.response?.data?.detail || "Test send failed");
+              }
+            }}
+            data-testid="edit-test-send-button"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition-all"
+          >
+            <Send size={16} strokeWidth={1.6} /> Send test to myself
+          </button>
           <button
             onClick={doRegenerate}
             disabled={regenBusy}

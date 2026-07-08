@@ -27,6 +27,7 @@ export const regenerate = (id) => api.post(`/emails/${id}/regenerate`);
 export const updateEmail = (id, data) => api.patch(`/emails/${id}`, data);
 export const deleteEmail = (id) => api.delete(`/emails/${id}`);
 export const sendEmails = (ids) => api.post("/emails/send", { ids });
+export const sendTest = (id) => api.post(`/emails/${id}/test-send`);
 
 export const getLogs = (params = {}) => api.get("/logs", { params });
 export const exportLogsUrl = `${API_BASE}/logs/export`;

@@ -30,6 +30,7 @@ def send_email(to_email: str, subject: str, html: str, text: Optional[str] = Non
 
     params: dict = {
         "from": f"{from_name} <{from_email}>",
+        "reply_to": from_email,
         "to": [to_email],
         "subject": subject,
         "html": html,

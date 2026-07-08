@@ -573,8 +573,62 @@ async def delete_pdf(_user: str = Depends(require_session)):
     return {"ok": True}
 
 
-# ---------- Wire up ----------
-app.include_router(api)
+@api.post("/emails/{email_id}/test-send")
+async def send_test(email_id: str, _user: str = Depends(require_session)):
+    """Send the selected email to the sender's own address for preview."""
+    doc = await emails_col.find_one({"id": email_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Email not found")
+    if not doc.get("subject") or not doc.get("intro"):
+        raise HTTPException(400, "Generate the email first")
+    own = os.environ.get("FROM_EMAIL", "").strip()
+    if not own:
+        raise HTTPException(400, "FROM_EMAIL is not configured")
+    gen = GeneratedEmail(subject=f"[TEST] {doc['subject']}", intro=doc["intro"])
+    greeting = build_greeting(doc.get("contact_name", ""), doc["contact_email"])
+    html = render_html(greeting, gen, doc["company_name"])
+    plain = render_plain(greeting, gen, doc["company_name"])
+    try:
+        msg_id = send_email(own, gen.subject, html, plain, attachments=_build_pdf_attachment())
+        return {"ok": True, "message_id": msg_id, "to": own}
+    except Exception as e:
+        raise HTTPException(502, f"Send failed: {e}")
+
+
+# ---------- Resend webhook (delivery tracking) ----------
+@app.post("/api/webhooks/resend")
+async def resend_webhook(payload: dict):
+    """Public webhook — no auth. Resend signs with a secret; verify if configured."""
+    event = (payload.get("type") or payload.get("event") or "").lower()
+    data = payload.get("data") or {}
+    msg_id = data.get("email_id") or data.get("id") or payload.get("id") or ""
+    if not msg_id:
+        return {"ok": True}
+    # map event → status field
+    status_map = {
+        "email.sent": "sent", "email.delivered": "delivered",
+        "email.delivery_delayed": "delayed", "email.bounced": "bounced",
+        "email.complained": "complained", "email.opened": "opened",
+        "email.clicked": "clicked", "email.failed": "failed",
+    }
+    field = status_map.get(event)
+    if not field:
+        return {"ok": True}
+    now = datetime.now(timezone.utc).isoformat()
+    upd: dict = {f"delivery.{field}_at": now, "delivery.last_event": event}
+    # touch top-level status for terminal states
+    if field in ("bounced", "failed", "complained"):
+        upd["status"] = "failed"
+        upd["error"] = f"resend: {event}"
+    await emails_col.update_one({"message_id": msg_id}, {"$set": upd})
+    await logs_col.insert_one({
+        "id": str(uuid.uuid4()), "message_id": msg_id, "event": event,
+        "status": field, "timestamp": now,
+    })
+    return {"ok": True}
+
+
+
 app.include_router(crm_router)
 
 app.add_middleware(
