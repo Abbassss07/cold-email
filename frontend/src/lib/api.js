@@ -60,3 +60,28 @@ export const updateTask = (id, data) => api.patch(`/tasks/${id}`, data);
 export const deleteTask = (id) => api.delete(`/tasks/${id}`);
 export const listMeetings = (lead_id) => api.get("/meetings", { params: lead_id ? { lead_id } : {} });
 export const createMeeting = (data) => api.post("/meetings", data);
+
+// Contact Lists
+export const getContactLists = () => api.get("/contact-lists");
+export const getContactList = (id) => api.get(`/contact-lists/${id}`);
+export const uploadContactList = (file, name) => {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("name", name);
+  return api.post("/contact-lists", form, { headers: { "Content-Type": "multipart/form-data" } });
+};
+export const renameContactList = (id, name) => api.put(`/contact-lists/${id}/rename`, { name });
+export const replaceContactList = (id, file) => {
+  const form = new FormData();
+  form.append("file", file);
+  return api.put(`/contact-lists/${id}/replace`, form, { headers: { "Content-Type": "multipart/form-data" } });
+};
+export const deleteContactList = (id) => api.delete(`/contact-lists/${id}`);
+
+// Newsletter
+export const sendNewsletter = (data) => api.post("/newsletter/send", data);
+export const getNewsletterStats = () => api.get("/newsletter/stats");
+
+// Campaigns
+export const listCampaigns = () => api.get("/campaigns");
+export const getCampaign = (id) => api.get(`/campaigns/${id}`);

@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
-import { LayoutDashboard, ScrollText, Settings as SettingsIcon, LogOut, ShieldCheck } from "lucide-react";
+import { LayoutDashboard, Mail, Newspaper, History, Users, Settings as SettingsIcon, LogOut, ShieldCheck, ScrollText } from "lucide-react";
 import { logout } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -17,7 +17,7 @@ export default function Layout({ onLogout }) {
   };
 
   const navItem = ({ isActive }) =>
-    `flex items-center gap-2.5 px-3.5 py-2 rounded-xl text-sm font-medium transition-all ${
+    `flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-all ${
       isActive ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
     }`;
 
@@ -30,20 +30,18 @@ export default function Layout({ onLogout }) {
               <ShieldCheck size={18} strokeWidth={1.8} />
             </div>
             <div>
-              <div className="text-sm font-bold tracking-tight text-slate-900">SDU Global</div>
-              <div className="text-[10px] uppercase tracking-[0.18em] text-slate-400 -mt-0.5">Outreach Console</div>
+              <div className="text-sm font-bold tracking-tight text-slate-900">SDU Connect</div>
+              <div className="text-[10px] uppercase tracking-[0.18em] text-slate-400 -mt-0.5">Outreach · Newsletter · CRM</div>
             </div>
           </div>
-          <nav className="hidden md:flex items-center gap-1">
-            <NavLink to="/" end className={navItem} data-testid="nav-dashboard">
-              <LayoutDashboard size={16} strokeWidth={1.6} /> Dashboard
-            </NavLink>
-            <NavLink to="/logs" className={navItem} data-testid="nav-logs">
-              <ScrollText size={16} strokeWidth={1.6} /> Logs
-            </NavLink>
-            <NavLink to="/settings" className={navItem} data-testid="nav-settings">
-              <SettingsIcon size={16} strokeWidth={1.6} /> Settings
-            </NavLink>
+          <nav className="hidden lg:flex items-center gap-1">
+            <NavLink to="/" end className={navItem} data-testid="nav-dashboard"><LayoutDashboard size={15} strokeWidth={1.6} /> Dashboard</NavLink>
+            <NavLink to="/outreach" className={navItem} data-testid="nav-outreach"><Mail size={15} strokeWidth={1.6} /> Cold Outreach</NavLink>
+            <NavLink to="/newsletter" className={navItem} data-testid="nav-newsletter"><Newspaper size={15} strokeWidth={1.6} /> Newsletter</NavLink>
+            <NavLink to="/contacts" className={navItem} data-testid="nav-contacts"><Users size={15} strokeWidth={1.6} /> Contacts</NavLink>
+            <NavLink to="/campaigns" className={navItem} data-testid="nav-campaigns"><History size={15} strokeWidth={1.6} /> Campaigns</NavLink>
+            <NavLink to="/logs" className={navItem} data-testid="nav-logs"><ScrollText size={15} strokeWidth={1.6} /> Logs</NavLink>
+            <NavLink to="/settings" className={navItem} data-testid="nav-settings"><SettingsIcon size={15} strokeWidth={1.6} /> Settings</NavLink>
           </nav>
           <button
             onClick={handleLogout}
@@ -53,9 +51,12 @@ export default function Layout({ onLogout }) {
             <LogOut size={16} strokeWidth={1.6} /> <span className="hidden sm:inline">Logout</span>
           </button>
         </div>
-        <nav className="md:hidden flex items-center gap-1 px-6 pb-3">
+        <nav className="lg:hidden flex items-center gap-1 px-6 pb-3 overflow-x-auto">
           <NavLink to="/" end className={navItem}>Dashboard</NavLink>
-          <NavLink to="/logs" className={navItem}>Logs</NavLink>
+          <NavLink to="/outreach" className={navItem}>Outreach</NavLink>
+          <NavLink to="/newsletter" className={navItem}>Newsletter</NavLink>
+          <NavLink to="/contacts" className={navItem}>Contacts</NavLink>
+          <NavLink to="/campaigns" className={navItem}>Campaigns</NavLink>
           <NavLink to="/settings" className={navItem}>Settings</NavLink>
         </nav>
       </header>

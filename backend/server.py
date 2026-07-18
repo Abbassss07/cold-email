@@ -38,6 +38,7 @@ from email_sender import check_status as resend_status, send_email  # noqa: E402
 from greeting import build_greeting  # noqa: E402
 from rate_limiter import allow, daily_count, daily_increment  # noqa: E402
 from crm import add_timeline, bind_db, crm as crm_router  # noqa: E402
+from newsletter import bind_db as bind_nl_db, nl as newsletter_router  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("sdu")
@@ -53,7 +54,10 @@ website_cache_col = db.website_cache
 tasks_col = db.tasks
 meetings_col = db.meetings
 timeline_col = db.timeline
+contact_lists_col = db.contact_lists
+campaigns_col = db.campaigns
 bind_db(emails_col, tasks_col, meetings_col, timeline_col, logs_col)
+bind_nl_db(contact_lists_col, campaigns_col, logs_col, emails_col)
 
 # ---------- PDF attachment ----------
 PDF_PATH = ROOT_DIR / "company_profile.pdf"
@@ -133,6 +137,8 @@ class LimitIn(BaseModel):
 EDITABLE_ENV_KEYS = {
     "COMPANY_NAME", "FROM_NAME", "FROM_EMAIL", "DESIGNATION",
     "PHONE", "COMPANY_WEBSITE", "GEMINI_API_KEY", "RESEND_API_KEY",
+    "NEWSLETTER_FROM_EMAIL", "NEWSLETTER_FROM_NAME",
+    "AI_RESEARCH_ENABLED", "SEND_DELAY_SECONDS",
 }
 
 
@@ -252,6 +258,20 @@ async def stats(_user: str = Depends(require_session)):
     async for row in emails_col.aggregate(pipe2):
         avg_ms = int(row.get("avg") or 0)
     counts["avg_gen_ms"] = avg_ms
+
+    # Engagement (from delivery.* fields set by Resend webhook)
+    delivered = await emails_col.count_documents({"delivery.delivered_at": {"$exists": True}})
+    opened = await emails_col.count_documents({"delivery.opened_at": {"$exists": True}})
+    clicked = await emails_col.count_documents({"delivery.clicked_at": {"$exists": True}})
+    bounced = await emails_col.count_documents({"delivery.bounced_at": {"$exists": True}})
+    counts["delivered"] = delivered
+    counts["opened"] = opened
+    counts["clicked"] = clicked
+    counts["bounced"] = bounced
+    sent_n = counts["sent"] or 0
+    counts["delivery_rate"] = round(delivered * 100.0 / sent_n, 1) if sent_n else 0.0
+    counts["open_rate"] = round(opened * 100.0 / delivered, 1) if delivered else 0.0
+    counts["click_rate"] = round(clicked * 100.0 / delivered, 1) if delivered else 0.0
     return counts
 
 
@@ -492,6 +512,10 @@ async def get_settings(_user: str = Depends(require_session)):
         "gemini_configured": gemini_ok,
         "resend": resend_status(),
         "pdf": pdf_meta,
+        "newsletter_from_email": os.environ.get("NEWSLETTER_FROM_EMAIL", ""),
+        "newsletter_from_name": os.environ.get("NEWSLETTER_FROM_NAME", ""),
+        "ai_research_enabled": os.environ.get("AI_RESEARCH_ENABLED", "true").lower() == "true",
+        "send_delay_seconds": int(os.environ.get("SEND_DELAY_SECONDS", "3")),
     }
 
 
@@ -621,6 +645,7 @@ async def resend_webhook(payload: dict):
         upd["status"] = "failed"
         upd["error"] = f"resend: {event}"
     await emails_col.update_one({"message_id": msg_id}, {"$set": upd})
+    await logs_col.update_many({"message_id": msg_id}, {"$set": {"status": field, "last_event_at": now}})
     await logs_col.insert_one({
         "id": str(uuid.uuid4()), "message_id": msg_id, "event": event,
         "status": field, "timestamp": now,
@@ -631,6 +656,7 @@ async def resend_webhook(payload: dict):
 
 app.include_router(api)
 app.include_router(crm_router)
+app.include_router(newsletter_router)
 
 app.add_middleware(
     CORSMiddleware,

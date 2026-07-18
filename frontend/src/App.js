@@ -8,6 +8,9 @@ import Dashboard from "@/pages/Dashboard";
 import Logs from "@/pages/Logs";
 import Settings from "@/pages/Settings";
 import LeadProfile from "@/pages/LeadProfile";
+import ContactLists from "@/pages/ContactLists";
+import Newsletter from "@/pages/Newsletter";
+import Campaigns from "@/pages/Campaigns";
 import Layout from "@/components/Layout";
 
 function Protected({ children, authed }) {
@@ -50,6 +53,10 @@ export default function App() {
             }
           >
             <Route path="/" element={<Dashboard />} />
+            <Route path="/outreach" element={<Dashboard />} />
+            <Route path="/newsletter" element={<Newsletter />} />
+            <Route path="/contacts" element={<ContactLists />} />
+            <Route path="/campaigns" element={<Campaigns />} />
             <Route path="/leads/:id" element={<LeadProfile />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/settings" element={<Settings />} />
