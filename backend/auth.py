@@ -2,8 +2,13 @@
 from __future__ import annotations
 
 import os
+import secrets
+
+import bcrypt
 from fastapi import Cookie, HTTPException, Response, status
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+
+from database import get_setting, set_setting
 
 SESSION_COOKIE = "sdu_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
@@ -50,14 +55,18 @@ def require_session(sdu_session: str | None = Cookie(default=None, alias=SESSION
     return data.get("user", "admin")
 
 
-def verify_password(password: str) -> bool:
+async def verify_password(password: str) -> bool:
+    """Verify the persisted password, falling back to the bootstrap env value."""
+    password_hash = await get_setting("admin_password_hash")
+    if password_hash:
+        try:
+            return bcrypt.checkpw(password.encode(), password_hash.encode())
+        except ValueError:
+            return False
     expected = os.environ.get("ADMIN_PASSWORD", "")
-    if not expected:
-        return False
-    # constant-time compare
-    if len(password) != len(expected):
-        return False
-    result = 0
-    for a, b in zip(password, expected):
-        result |= ord(a) ^ ord(b)
-    return result == 0
+    return bool(expected) and secrets.compare_digest(password, expected)
+
+
+async def set_password(password: str) -> None:
+    password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    await set_setting("admin_password_hash", password_hash)

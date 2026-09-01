@@ -1,86 +1,108 @@
 # SDU Cold Email Outreach
 
-Production-ready cold email outreach console for SDU Global Auditing.
+Cold-email and newsletter outreach console for SDU Global Auditing.
 
-- **Stack:** FastAPI + MongoDB (backend) · React + Tailwind + shadcn UI (frontend)
-- **AI:** Google Gemini 2.5 Flash (structured JSON output)
-- **Email provider:** Resend
-- **Auth:** Single admin password, HTTP-only signed session cookie
+- **Frontend:** Create React App, React Router, Tailwind, shadcn/Radix UI
+- **Backend:** FastAPI on Vercel's Python runtime
+- **Database and files:** Supabase Postgres and private Supabase Storage
+- **Email:** Resend
+- **AI:** Google Gemini 2.5 Flash
+- **Auth:** Single-admin password with a signed HTTP-only session cookie
 
----
+## Repository layout
 
-## Features
-
-- CSV upload with validation (required: `company_name`, `contact_email`; optional: `website`, `notes`)
-- Optional homepage enrichment per company (title / description / og tags)
-- Gemini 2.5 Flash strict-JSON generation of **subject + intro + body** only (the rest of the email comes from a fixed branded template — keeps voice consistent and tokens cheap)
-- Email preview table with **edit, regenerate, delete, checkbox-select**
-- Batch send via Resend with stored `message_id` and full log trail
-- Logs page with search, status filter, and CSV export
-- Settings: company context editor, daily send limit, provider status, password change
-- Rate limits + daily quota + max CSV size/rows
-- Friendly errors, no crashes
-
-## Project layout
-
-```
-/app
-├── backend/
-│   ├── server.py              FastAPI app & routes
-│   ├── auth.py                Session cookies + password verify
-│   ├── email_generator.py     Gemini 2.5 Flash structured output
-│   ├── email_sender.py        Resend wrapper (swap module to change provider)
-│   ├── csv_handler.py         CSV parsing + row validation
-│   ├── rate_limiter.py        In-memory rate limit + daily counter
-│   ├── company_context.txt    Read every generation
-│   └── .env                   See below
-├── frontend/                  React app
-├── sample_companies.csv       Example CSV
-└── README.md
+```text
+backend/                 FastAPI API and Python dependencies
+frontend/                Create React App frontend
+supabase/migrations/     Postgres schema, RLS, quota functions, Storage bucket
 ```
 
-## Environment variables (`backend/.env`)
+## Supabase setup
 
-```
-MONGO_URL="mongodb://localhost:27017"
-DB_NAME="test_database"
-CORS_ORIGINS="*"
-GEMINI_API_KEY=""                # Get from https://aistudio.google.com/app/apikey
-RESEND_API_KEY=""                # Get from https://resend.com/api-keys
-FROM_EMAIL="onboarding@resend.dev"
-FROM_NAME="SDU Global Auditing"
-ADMIN_PASSWORD="admin123"
-SECRET_KEY="long-random-string"
-DAILY_EMAIL_LIMIT=200
-MAX_CSV_ROWS=500
+Create a new Supabase project, then apply the migration in `supabase/migrations`:
+
+```bash
+npx supabase login
+npx supabase link --project-ref YOUR_PROJECT_REF
+npx supabase db push
 ```
 
-`frontend/.env` exposes the backend URL: `REACT_APP_BACKEND_URL=...`.
+The migration creates:
 
-## Run locally
+- leads/cold emails
+- send and delivery logs
+- website-enrichment cache
+- CRM tasks, meetings, and timeline
+- contact lists and newsletter campaigns
+- durable application settings and admin password override
+- atomic daily send counts
+- a private `app-files` Storage bucket for the company-profile PDF
 
-The platform supervises both processes:
+All public-schema tables have RLS enabled. Browser roles are explicitly denied; only the backend service-role client accesses them. Never expose `SUPABASE_SERVICE_ROLE_KEY` to the React frontend.
 
+## Local development
+
+Copy the environment templates and fill in real values:
+
+```bash
+copy backend\.env.example backend\.env
+copy frontend\.env.example frontend\.env
 ```
-sudo supervisorctl restart backend
-sudo supervisorctl restart frontend
+
+Backend:
+
+```bash
+python -m venv .venv
+.venv\Scripts\pip install -r backend\requirements.txt
+cd backend
+..\.venv\Scripts\uvicorn server:app --reload --port 8000
 ```
 
-Visit the frontend URL, sign in with `ADMIN_PASSWORD`.
+Frontend, in another terminal:
 
-## How to get keys
+```bash
+cd frontend
+npm ci
+npm start
+```
 
-- **Gemini API key:** https://aistudio.google.com/app/apikey → "Create API key"
-- **Resend API key:** https://resend.com/api-keys → make sure your `FROM_EMAIL` domain is verified (or use `onboarding@resend.dev` for testing — recipient must be your own Resend account email)
+## Vercel deployment
 
-## Swapping providers
+Deploy this repository as two Vercel projects. This uses generally available framework support and does not depend on Vercel Services private beta.
 
-- To replace Gemini: change only `backend/email_generator.py` (keep `generate_email` / `GeneratedEmail` interface)
-- To replace Resend: change only `backend/email_sender.py` (keep `send_email(to, subject, html, text) -> message_id`)
+### Backend project
 
-## Troubleshooting
+- Root Directory: `backend`
+- Framework preset: FastAPI (auto-detected)
+- Python: 3.12 from `.python-version`
+- Build/output overrides: none
+- Add all backend variables from `backend/.env.example`
 
-- **401 Not authenticated** — sign in again; cookies expire after 7 days
-- **Gemini errors** — verify `GEMINI_API_KEY`, model is `gemini-2.5-flash`
-- **Resend errors** — verify domain and API key; check Resend dashboard logs
-- **CSV errors** — confirm required columns and that emails look like `a@b.c`
+### Frontend project
+
+- Root Directory: `frontend`
+- Framework preset: Create React App
+- Build command: `npm run build`
+- Output directory: `build`
+- Set `REACT_APP_BACKEND_URL` to the backend production URL
+- `frontend/vercel.json` supplies the React Router SPA fallback
+
+Set backend `CORS_ORIGINS` to the exact frontend production origin. Multiple origins can be comma-separated.
+
+## Resend webhook
+
+After the backend is deployed, create a Resend webhook pointing to:
+
+```text
+https://YOUR-BACKEND-DOMAIN/api/webhooks/resend
+```
+
+Subscribe to the email delivery events you need, then put its signing secret in `RESEND_WEBHOOK_SECRET`. Incoming events are signature-verified and de-duplicated using the Svix event ID.
+
+## Security notes
+
+- Replace the placeholder `ADMIN_PASSWORD` and `SECRET_KEY` values before deployment.
+- `SECRET_KEY` must be at least 16 characters; use a long random value.
+- Use a verified Resend sending domain for `FROM_EMAIL`.
+- The admin password can be changed in Settings; the changed bcrypt hash is stored in Supabase. `ADMIN_PASSWORD` remains the initial/bootstrap password.
+- API keys are deliberately not editable in the browser. Manage them in Vercel.

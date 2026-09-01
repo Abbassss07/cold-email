@@ -129,11 +129,11 @@ log("PUT daily-limit", r.status_code == 200, f"status={r.status_code}")
 # 19. Change password and back
 r = s.put(f"{BASE}/settings/password", json={"current_password": "admin123", "new_password": "newpass1"})
 log("PUT password change", r.status_code == 200, f"status={r.status_code}")
-s3 = requests.Session()
-r = s3.post(f"{BASE}/auth/login", json={"password": "newpass1"})
+session3 = requests.Session()
+r = session3.post(f"{BASE}/auth/login", json={"password": "newpass1"})
 log("login with new pw", r.status_code == 200, f"status={r.status_code}")
 # revert
-r = s3.put(f"{BASE}/settings/password", json={"current_password": "newpass1", "new_password": "admin123"})
+r = session3.put(f"{BASE}/settings/password", json={"current_password": "newpass1", "new_password": "admin123"})
 log("PUT password revert", r.status_code == 200, f"status={r.status_code}")
 
 # 20. /logs

@@ -145,9 +145,11 @@ def _truncate_words(text: str, limit: int) -> str:
 def generate_email(*, company_name: str, contact_name: str, contact_email: str,
                    industry: str = "", notes: str = "",
                    website_summary: Optional[str] = None,
+                   company_context: Optional[str] = None,
                    max_retries: int = 2) -> GenerationResult:
     """Generate subject + intro with up to 2 additional retries on transient failures."""
-    company_context = read_company_context()
+    if company_context is None:
+        company_context = read_company_context()
     prompt = _build_prompt(
         company_name=company_name, contact_name=contact_name, contact_email=contact_email,
         industry=industry, notes=notes, website_summary=website_summary,
@@ -202,30 +204,35 @@ def _render(template: str, mapping: dict) -> str:
     return template
 
 
-def _template_vars(greeting: str, intro_text: str, company_name_recipient: str) -> dict:
+def _template_vars(greeting: str, intro_text: str, company_name_recipient: str,
+                   settings: Optional[dict[str, str]] = None) -> dict:
+    settings = settings or {}
+    value = lambda key, default="": settings.get(key) or os.environ.get(key, default)
     return {
         "greeting": greeting,
         "intro": intro_text,
-        "company_name": os.environ.get("COMPANY_NAME", "SDU Global Auditing"),
-        "from_name": os.environ.get("FROM_NAME", "SDU Global Auditing"),
-        "designation": os.environ.get("DESIGNATION", "Business Advisory"),
-        "phone": os.environ.get("PHONE", ""),
-        "website": os.environ.get("COMPANY_WEBSITE", ""),
-        "from_email": os.environ.get("FROM_EMAIL", ""),
+        "company_name": value("COMPANY_NAME", "SDU Global Auditing"),
+        "from_name": value("FROM_NAME", "SDU Global Auditing"),
+        "designation": value("DESIGNATION", "Business Advisory"),
+        "phone": value("PHONE"),
+        "website": value("COMPANY_WEBSITE"),
+        "from_email": value("FROM_EMAIL"),
         "recipient_company": company_name_recipient,
     }
 
 
-def render_html(greeting: str, generated: GeneratedEmail, recipient_company: str) -> str:
+def render_html(greeting: str, generated: GeneratedEmail, recipient_company: str,
+                settings: Optional[dict[str, str]] = None) -> str:
     tpl = read_body_html()
     intro_html = _paragraphs(generated.intro)
     # When substituting intro into HTML template, replace {{intro}} as raw paragraph(s)
-    mapping = _template_vars(greeting, "__INTRO_PH__", recipient_company)
+    mapping = _template_vars(greeting, "__INTRO_PH__", recipient_company, settings)
     rendered = _render(tpl, mapping)
     return rendered.replace("__INTRO_PH__", intro_html)
 
 
-def render_plain(greeting: str, generated: GeneratedEmail, recipient_company: str) -> str:
+def render_plain(greeting: str, generated: GeneratedEmail, recipient_company: str,
+                 settings: Optional[dict[str, str]] = None) -> str:
     tpl = read_body_text()
-    mapping = _template_vars(greeting, generated.intro, recipient_company)
+    mapping = _template_vars(greeting, generated.intro, recipient_company, settings)
     return _render(tpl, mapping)

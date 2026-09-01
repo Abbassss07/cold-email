@@ -1,18 +1,15 @@
 """Simple in-memory rate limiter + daily quota counter."""
 from __future__ import annotations
 
+import os
 import time
 from collections import defaultdict, deque
 from threading import Lock
-from datetime import datetime, timezone
+
+from database import rpc
 
 _lock = Lock()
 _buckets: dict[str, deque] = defaultdict(deque)
-
-# daily counters
-_daily: dict[str, int] = {}
-_daily_date: str = ""
-
 
 def allow(key: str, max_calls: int, window_seconds: int) -> bool:
     now = time.time()
@@ -26,26 +23,19 @@ def allow(key: str, max_calls: int, window_seconds: int) -> bool:
         return True
 
 
-def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+async def daily_count() -> int:
+    """Return today's durable send count from Postgres."""
+    value = await rpc("get_daily_email_count")
+    return int(value or 0)
 
 
-def daily_count(key: str = "sent") -> int:
-    global _daily_date
-    with _lock:
-        today = _today()
-        if today != _daily_date:
-            _daily.clear()
-            _daily_date = today
-        return _daily.get(key, 0)
+async def reserve_daily_send(limit: int | None = None) -> bool:
+    """Atomically reserve one daily send slot across all Vercel instances."""
+    if limit is None:
+        limit = int(os.environ.get("DAILY_EMAIL_LIMIT", "200"))
+    return bool(await rpc("reserve_daily_email", {"p_limit": limit}))
 
 
-def daily_increment(key: str = "sent", by: int = 1) -> int:
-    global _daily_date
-    with _lock:
-        today = _today()
-        if today != _daily_date:
-            _daily.clear()
-            _daily_date = today
-        _daily[key] = _daily.get(key, 0) + by
-        return _daily[key]
+async def release_daily_send() -> None:
+    """Return a reserved slot after the provider rejects a send."""
+    await rpc("release_daily_email")

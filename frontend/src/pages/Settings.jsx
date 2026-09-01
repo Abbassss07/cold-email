@@ -202,8 +202,6 @@ function FirmProfileCard({ data, onSaved }) {
     DESIGNATION: data.designation || "",
     PHONE: data.phone || "",
     COMPANY_WEBSITE: data.company_website || "",
-    GEMINI_API_KEY: "",
-    RESEND_API_KEY: "",
   });
   const [busy, setBusy] = useState(false);
   const f = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -211,17 +209,8 @@ function FirmProfileCard({ data, onSaved }) {
   const save = async () => {
     setBusy(true);
     try {
-      const updates = {};
-      Object.entries(form).forEach(([k, v]) => {
-        if (k === "GEMINI_API_KEY" || k === "RESEND_API_KEY") {
-          if (v.trim()) updates[k] = v.trim();
-        } else {
-          updates[k] = v;
-        }
-      });
-      await updateEnv(updates);
+      await updateEnv(form);
       toast.success("Saved firm profile");
-      setForm({ ...form, GEMINI_API_KEY: "", RESEND_API_KEY: "" });
       onSaved?.();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Save failed");
@@ -236,7 +225,7 @@ function FirmProfileCard({ data, onSaved }) {
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-[0_2px_10px_rgba(0,0,0,0.04)] p-6">
-      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 mb-4">Firm profile (used in email signature & API access)</div>
+      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 mb-4">Firm profile (used in email signatures)</div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Field k="COMPANY_NAME" label="Company name" placeholder="SDU Global Auditing" />
         <Field k="FROM_NAME" label="From name" placeholder="Mohammed Abbas" />
@@ -244,9 +233,8 @@ function FirmProfileCard({ data, onSaved }) {
         <Field k="DESIGNATION" label="Designation" placeholder="Business Advisory" />
         <Field k="PHONE" label="Phone" placeholder="+971 4 000 0000" />
         <Field k="COMPANY_WEBSITE" label="Website" placeholder="https://sduglobal.ae" />
-        <Field k="GEMINI_API_KEY" label="Gemini API key" type="password" placeholder="Leave blank to keep current" help="Get from https://aistudio.google.com/app/apikey" />
-        <Field k="RESEND_API_KEY" label="Resend API key" type="password" placeholder="Leave blank to keep current" help="Get from https://resend.com/api-keys" />
       </div>
+      <p className="mt-4 text-xs text-slate-500">Gemini and Resend API keys are managed securely in Vercel environment variables.</p>
       <div className="mt-5 flex justify-end">
         <button
           onClick={save}

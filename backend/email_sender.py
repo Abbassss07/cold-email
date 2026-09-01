@@ -20,11 +20,13 @@ def _ensure_key() -> str:
 
 
 def send_email(to_email: str, subject: str, html: str, text: Optional[str] = None,
-               attachments: Optional[list] = None, max_retries: int = 2) -> str:
+               attachments: Optional[list] = None, max_retries: int = 2,
+               from_email: Optional[str] = None,
+               from_name: Optional[str] = None) -> str:
     """Send email through Resend with up to 2 additional retries. Returns message id."""
     _ensure_key()
-    from_email = os.environ.get("FROM_EMAIL", "").strip()
-    from_name = os.environ.get("FROM_NAME", "").strip() or "SDU Global Auditing"
+    from_email = (from_email or os.environ.get("FROM_EMAIL", "")).strip()
+    from_name = (from_name or os.environ.get("FROM_NAME", "")).strip() or "SDU Global Auditing"
     if not from_email:
         raise RuntimeError("FROM_EMAIL is not set")
 

@@ -15,8 +15,9 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, EmailStr, Field
 
 from auth import require_session
+from database import get_setting, get_settings_map
 from email_sender import send_email
-from rate_limiter import daily_count, daily_increment
+from rate_limiter import release_daily_send, reserve_daily_send
 
 logger = logging.getLogger(__name__)
 
@@ -199,74 +200,77 @@ async def newsletter_send(payload: NewsletterSendIn, _u: str = Depends(require_s
     if not contacts:
         raise HTTPException(400, "Contact list is empty")
 
+    saved = await get_settings_map()
     if payload.test_only:
-        test_to = payload.test_to or os.environ.get("NEWSLETTER_FROM_EMAIL",
-                                                    os.environ.get("FROM_EMAIL", ""))
+        test_to = (payload.test_to or saved.get("NEWSLETTER_FROM_EMAIL")
+                   or os.environ.get("NEWSLETTER_FROM_EMAIL")
+                   or saved.get("FROM_EMAIL") or os.environ.get("FROM_EMAIL", ""))
         if not test_to:
             raise HTTPException(400, "No test recipient configured")
         contacts = [{"contact_email": test_to, "contact_name": "Test",
                      "company_name": lst.get("name", "")}]
 
-    from_email = (payload.from_email or os.environ.get("NEWSLETTER_FROM_EMAIL")
+    from_email = (payload.from_email or saved.get("NEWSLETTER_FROM_EMAIL")
+                  or os.environ.get("NEWSLETTER_FROM_EMAIL") or saved.get("FROM_EMAIL")
                   or os.environ.get("FROM_EMAIL", "")).strip()
-    from_name = (payload.from_name or os.environ.get("NEWSLETTER_FROM_NAME")
+    from_name = (payload.from_name or saved.get("NEWSLETTER_FROM_NAME")
+                 or os.environ.get("NEWSLETTER_FROM_NAME") or saved.get("FROM_NAME")
                  or os.environ.get("FROM_NAME", "SDU Connect")).strip()
     if not from_email:
         raise HTTPException(400, "From email not configured")
 
     attachments = _validate_attachments(payload.attachments)
 
-    # temporarily override env for send_email
-    prev_from_email = os.environ.get("FROM_EMAIL", "")
-    prev_from_name = os.environ.get("FROM_NAME", "")
-    os.environ["FROM_EMAIL"] = from_email
-    os.environ["FROM_NAME"] = from_name
-
     campaign_id = str(uuid.uuid4())
     started = _now()
     results = {"sent": 0, "failed": 0, "errors": []}
+    daily_limit = int(await get_setting(
+        "daily_email_limit", os.environ.get("DAILY_EMAIL_LIMIT", "200")
+    ))
 
-    try:
-        for c in contacts:
+    for c in contacts:
+        if not await reserve_daily_send(daily_limit):
+            results["failed"] += 1
+            results["errors"].append({"email": c["contact_email"], "error": "Daily limit reached"})
+            continue
+        try:
             html = _personalize(payload.body_html, c) or _personalize(payload.body_text, c)
             plain = _personalize(payload.body_text, c) or None
             subject = _personalize(payload.subject, c)
-            try:
-                msg_id = send_email(c["contact_email"], subject, html, plain,
-                                     attachments=attachments)
-                results["sent"] += 1
-                await _db["logs"].insert_one({
-                    "id": str(uuid.uuid4()),
-                    "campaign_id": campaign_id,
-                    "kind": "newsletter",
-                    "company_name": c.get("company_name", ""),
-                    "contact_email": c["contact_email"],
-                    "subject": subject,
-                    "status": "sent",
-                    "provider": "resend",
-                    "message_id": msg_id,
-                    "timestamp": _now(),
-                    "error": "",
-                })
-                daily_increment("sent")
-            except Exception as e:
-                results["failed"] += 1
-                results["errors"].append({"email": c["contact_email"], "error": str(e)})
-                await _db["logs"].insert_one({
-                    "id": str(uuid.uuid4()),
-                    "campaign_id": campaign_id,
-                    "kind": "newsletter",
-                    "company_name": c.get("company_name", ""),
-                    "contact_email": c["contact_email"],
-                    "subject": subject,
-                    "status": "failed",
-                    "provider": "resend",
-                    "timestamp": _now(),
-                    "error": str(e),
-                })
-    finally:
-        os.environ["FROM_EMAIL"] = prev_from_email
-        os.environ["FROM_NAME"] = prev_from_name
+            msg_id = send_email(
+                c["contact_email"], subject, html, plain, attachments=attachments,
+                from_email=from_email, from_name=from_name,
+            )
+            results["sent"] += 1
+            await _db["logs"].insert_one({
+                "id": str(uuid.uuid4()),
+                "campaign_id": campaign_id,
+                "kind": "newsletter",
+                "company_name": c.get("company_name", ""),
+                "contact_email": c["contact_email"],
+                "subject": subject,
+                "status": "sent",
+                "provider": "resend",
+                "message_id": msg_id,
+                "timestamp": _now(),
+                "error": "",
+            })
+        except Exception as e:
+            await release_daily_send()
+            results["failed"] += 1
+            results["errors"].append({"email": c["contact_email"], "error": str(e)})
+            await _db["logs"].insert_one({
+                "id": str(uuid.uuid4()),
+                "campaign_id": campaign_id,
+                "kind": "newsletter",
+                "company_name": c.get("company_name", ""),
+                "contact_email": c["contact_email"],
+                "subject": payload.subject,
+                "status": "failed",
+                "provider": "resend",
+                "timestamp": _now(),
+                "error": str(e),
+            })
 
     if not payload.test_only:
         await _db["campaigns"].insert_one({

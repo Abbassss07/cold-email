@@ -4,14 +4,15 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Response, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
-from motor.motor_asyncio import AsyncIOMotorClient
+import resend
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
 
@@ -22,6 +23,7 @@ from auth import (  # noqa: E402
     clear_session_cookie,
     create_session_cookie,
     require_session,
+    set_password,
     verify_password,
 )
 from csv_handler import parse_csv  # noqa: E402
@@ -32,43 +34,55 @@ from email_generator import (  # noqa: E402
     read_company_context,
     render_html,
     render_plain,
-    write_company_context,
 )
 from email_sender import check_status as resend_status, send_email  # noqa: E402
 from greeting import build_greeting  # noqa: E402
-from rate_limiter import allow, daily_count, daily_increment  # noqa: E402
+from rate_limiter import (  # noqa: E402
+    allow,
+    daily_count,
+    release_daily_send,
+    reserve_daily_send,
+)
 from crm import add_timeline, bind_db, crm as crm_router  # noqa: E402
 from newsletter import bind_db as bind_nl_db, nl as newsletter_router  # noqa: E402
+from database import (  # noqa: E402
+    Collection,
+    get_setting,
+    get_settings_map,
+    set_setting,
+    storage_download,
+    storage_info,
+    storage_remove,
+    storage_upload,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("sdu")
 
-# ---------- DB ----------
-mongo_url = os.environ["MONGO_URL"]
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ["DB_NAME"]]
-emails_col = db.cold_emails
-logs_col = db.send_logs
-settings_col = db.settings
-website_cache_col = db.website_cache
-tasks_col = db.tasks
-meetings_col = db.meetings
-timeline_col = db.timeline
-contact_lists_col = db.contact_lists
-campaigns_col = db.campaigns
+# ---------- Supabase Postgres ----------
+emails_col = Collection("leads")
+logs_col = Collection("send_logs")
+website_cache_col = Collection("website_cache")
+tasks_col = Collection("tasks")
+meetings_col = Collection("meetings")
+timeline_col = Collection("timeline")
+contact_lists_col = Collection("contact_lists")
+campaigns_col = Collection("campaigns")
 bind_db(emails_col, tasks_col, meetings_col, timeline_col, logs_col)
 bind_nl_db(contact_lists_col, campaigns_col, logs_col, emails_col)
 
 # ---------- PDF attachment ----------
-PDF_PATH = ROOT_DIR / "company_profile.pdf"
+PDF_STORAGE_PATH = "company/company-profile.pdf"
 
 
-def _build_pdf_attachment() -> list:
-    """Returns Resend-compatible attachments list (base64) if PDF exists, else []."""
-    if not PDF_PATH.exists():
-        return []
+async def _build_pdf_attachment() -> list:
+    """Return a Resend-compatible attachment from private Supabase Storage."""
     import base64
-    content = base64.b64encode(PDF_PATH.read_bytes()).decode("ascii")
+    try:
+        data = await storage_download(PDF_STORAGE_PATH)
+    except Exception:
+        return []
+    content = base64.b64encode(data).decode("ascii")
     return [{"filename": "SDU-Global-Company-Profile.pdf", "content": content}]
 
 # ---------- App ----------
@@ -146,36 +160,12 @@ class EnvIn(BaseModel):
     updates: dict[str, str]
 
 
-def _update_env_file(updates: dict[str, str]) -> None:
-    """Safely update only specified keys in .env; never touch others."""
-    env_path = ROOT_DIR / ".env"
-    lines = env_path.read_text().splitlines() if env_path.exists() else []
-    seen: set[str] = set()
-    out: list[str] = []
-    for ln in lines:
-        if "=" in ln and not ln.lstrip().startswith("#"):
-            k = ln.split("=", 1)[0].strip()
-            if k in updates:
-                # escape double quotes inside the value
-                v = updates[k].replace('"', '\\"')
-                out.append(f'{k}="{v}"')
-                seen.add(k)
-                continue
-        out.append(ln)
-    for k, v in updates.items():
-        if k not in seen:
-            out.append(f'{k}="{v.replace(chr(34), chr(92) + chr(34))}"')
-    env_path.write_text("\n".join(out) + "\n")
-    for k, v in updates.items():
-        os.environ[k] = v
-
-
 # ---------- Auth ----------
 @api.post("/auth/login")
 async def login(payload: LoginIn, response: Response):
     if not allow("login", 10, 60):
         raise HTTPException(429, "Too many login attempts. Try again shortly.")
-    if not verify_password(payload.password):
+    if not await verify_password(payload.password):
         raise HTTPException(401, "Invalid password")
     create_session_cookie(response, "admin")
     return {"ok": True}
@@ -240,8 +230,10 @@ async def stats(_user: str = Depends(require_session)):
     total = sum(counts.values())
     counts["total"] = total
     counts["draft"] = counts["generated"]  # alias
-    counts["daily_sent"] = daily_count("sent")
-    counts["daily_limit"] = int(os.environ.get("DAILY_EMAIL_LIMIT", "200"))
+    counts["daily_sent"] = await daily_count()
+    counts["daily_limit"] = int(await get_setting(
+        "daily_email_limit", os.environ.get("DAILY_EMAIL_LIMIT", "200")
+    ))
 
     # Today's emails (created today UTC)
     today_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -295,6 +287,7 @@ async def _get_website_summary(website: str) -> Optional[str]:
 async def _generate_one(doc: dict) -> dict:
     try:
         website_summary = await _get_website_summary(doc.get("website") or "")
+        company_context = await get_setting("company_context", read_company_context())
         result = generate_email(
             company_name=doc["company_name"],
             contact_name=doc.get("contact_name", ""),
@@ -302,6 +295,7 @@ async def _generate_one(doc: dict) -> dict:
             industry=doc.get("industry", ""),
             notes=doc.get("notes", ""),
             website_summary=website_summary,
+            company_context=company_context,
         )
         update = {
             "subject": result.email.subject,
@@ -378,7 +372,10 @@ async def send(payload: SendIn, _user: str = Depends(require_session)):
     if not allow("send", 30, 60):
         raise HTTPException(429, "Send rate limit reached. Try again shortly.")
 
-    daily_limit = int(os.environ.get("DAILY_EMAIL_LIMIT", "200"))
+    daily_limit = int(await get_setting(
+        "daily_email_limit", os.environ.get("DAILY_EMAIL_LIMIT", "200")
+    ))
+    runtime_settings = await get_settings_map()
     results = []
     for _id in payload.ids:
         doc = await emails_col.find_one({"id": _id}, {"_id": 0})
@@ -392,20 +389,24 @@ async def send(payload: SendIn, _user: str = Depends(require_session)):
             results.append({"id": _id, "status": "failed", "error": "Email not generated"})
             await emails_col.update_one({"id": _id}, {"$set": {"status": "failed", "error": "Not generated"}})
             continue
-        if daily_count("sent") >= daily_limit:
+        if not await reserve_daily_send(daily_limit):
             await emails_col.update_one({"id": _id}, {"$set": {"status": "failed", "error": "Daily limit reached"}})
             results.append({"id": _id, "status": "failed", "error": "Daily limit reached"})
             continue
 
         gen = GeneratedEmail(subject=doc["subject"], intro=doc["intro"])
         greeting = build_greeting(doc.get("contact_name", ""), doc["contact_email"])
-        html = render_html(greeting, gen, doc["company_name"])
-        plain = render_plain(greeting, gen, doc["company_name"])
-        attachments = _build_pdf_attachment()
+        html = render_html(greeting, gen, doc["company_name"], runtime_settings)
+        plain = render_plain(greeting, gen, doc["company_name"], runtime_settings)
+        attachments = await _build_pdf_attachment()
 
         try:
-            msg_id = send_email(doc["contact_email"], gen.subject, html, plain,
-                                attachments=attachments)
+            msg_id = send_email(
+                doc["contact_email"], gen.subject, html, plain,
+                attachments=attachments,
+                from_email=runtime_settings.get("FROM_EMAIL"),
+                from_name=runtime_settings.get("FROM_NAME"),
+            )
             now = datetime.now(timezone.utc).isoformat()
             await emails_col.update_one({"id": _id}, {"$set": {
                 "status": "sent",
@@ -430,9 +431,9 @@ async def send(payload: SendIn, _user: str = Depends(require_session)):
                 "timestamp": now,
                 "error": "",
             })
-            daily_increment("sent")
             results.append({"id": _id, "status": "sent", "message_id": msg_id})
         except Exception as e:
+            await release_daily_send()
             logger.exception("Send failed for %s", _id)
             err = str(e)
             now = datetime.now(timezone.utc).isoformat()
@@ -491,31 +492,34 @@ async def export_logs(_user: str = Depends(require_session)):
 # ---------- Settings ----------
 @api.get("/settings")
 async def get_settings(_user: str = Depends(require_session)):
+    saved = await get_settings_map()
+    value = lambda key, default="": saved.get(key) or os.environ.get(key, default)
     gemini_ok = bool(os.environ.get("GEMINI_API_KEY", "").strip())
     pdf_meta: dict = {"present": False, "size": 0}
-    if PDF_PATH.exists():
-        st = PDF_PATH.stat()
+    storage_meta = await storage_info(PDF_STORAGE_PATH)
+    if storage_meta:
+        metadata = storage_meta.get("metadata") or {}
         pdf_meta = {
             "present": True,
-            "size": st.st_size,
-            "uploaded_at": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+            "size": int(metadata.get("size") or 0),
+            "uploaded_at": storage_meta.get("updated_at") or storage_meta.get("created_at"),
         }
     return {
-        "company_context": read_company_context(),
-        "daily_limit": int(os.environ.get("DAILY_EMAIL_LIMIT", "200")),
-        "from_email": os.environ.get("FROM_EMAIL", ""),
-        "from_name": os.environ.get("FROM_NAME", ""),
-        "company_name": os.environ.get("COMPANY_NAME", ""),
-        "designation": os.environ.get("DESIGNATION", ""),
-        "phone": os.environ.get("PHONE", ""),
-        "company_website": os.environ.get("COMPANY_WEBSITE", ""),
+        "company_context": saved.get("company_context") or read_company_context(),
+        "daily_limit": int(saved.get("daily_email_limit") or os.environ.get("DAILY_EMAIL_LIMIT", "200")),
+        "from_email": value("FROM_EMAIL"),
+        "from_name": value("FROM_NAME"),
+        "company_name": value("COMPANY_NAME"),
+        "designation": value("DESIGNATION"),
+        "phone": value("PHONE"),
+        "company_website": value("COMPANY_WEBSITE"),
         "gemini_configured": gemini_ok,
         "resend": resend_status(),
         "pdf": pdf_meta,
-        "newsletter_from_email": os.environ.get("NEWSLETTER_FROM_EMAIL", ""),
-        "newsletter_from_name": os.environ.get("NEWSLETTER_FROM_NAME", ""),
-        "ai_research_enabled": os.environ.get("AI_RESEARCH_ENABLED", "true").lower() == "true",
-        "send_delay_seconds": int(os.environ.get("SEND_DELAY_SECONDS", "3")),
+        "newsletter_from_email": value("NEWSLETTER_FROM_EMAIL"),
+        "newsletter_from_name": value("NEWSLETTER_FROM_NAME"),
+        "ai_research_enabled": value("AI_RESEARCH_ENABLED", "true").lower() == "true",
+        "send_delay_seconds": int(value("SEND_DELAY_SECONDS", "3")),
     }
 
 
@@ -523,16 +527,23 @@ async def get_settings(_user: str = Depends(require_session)):
 async def set_context(payload: ContextIn, _user: str = Depends(require_session)):
     if len(payload.content) > 50_000:
         raise HTTPException(413, "Context too large")
-    write_company_context(payload.content)
+    await set_setting("company_context", payload.content)
     return {"ok": True}
 
 
 # Keys whose existing value must be preserved if the new value is empty
-PROTECTED_IF_EMPTY = {"GEMINI_API_KEY", "RESEND_API_KEY", "FROM_EMAIL"}
+PROTECTED_IF_EMPTY = {"FROM_EMAIL"}
 
 
 @api.put("/settings/env")
 async def update_env(payload: EnvIn, _user: str = Depends(require_session)):
+    provider_keys = {"GEMINI_API_KEY", "RESEND_API_KEY"}
+    attempted_provider_keys = provider_keys.intersection(payload.updates)
+    if attempted_provider_keys:
+        raise HTTPException(
+            400,
+            "API keys are managed in Vercel environment variables and cannot be changed here",
+        )
     bad = [k for k in payload.updates if k not in EDITABLE_ENV_KEYS]
     if bad:
         raise HTTPException(400, f"Not editable: {', '.join(bad)}")
@@ -546,7 +557,8 @@ async def update_env(payload: EnvIn, _user: str = Depends(require_session)):
         cleaned[k] = val
     if not cleaned:
         return {"ok": True, "updated": []}
-    _update_env_file(cleaned)
+    for key, value in cleaned.items():
+        await set_setting(key, value)
     return {"ok": True, "updated": list(cleaned.keys())}
 
 
@@ -554,17 +566,17 @@ async def update_env(payload: EnvIn, _user: str = Depends(require_session)):
 async def set_daily_limit(payload: LimitIn, _user: str = Depends(require_session)):
     if payload.daily_limit < 1 or payload.daily_limit > 5000:
         raise HTTPException(400, "Daily limit must be between 1 and 5000")
-    os.environ["DAILY_EMAIL_LIMIT"] = str(payload.daily_limit)
+    await set_setting("daily_email_limit", str(payload.daily_limit))
     return {"ok": True, "daily_limit": payload.daily_limit}
 
 
 @api.put("/settings/password")
 async def change_password(payload: PasswordChangeIn, _user: str = Depends(require_session)):
-    if not verify_password(payload.current_password):
+    if not await verify_password(payload.current_password):
         raise HTTPException(401, "Current password incorrect")
     if len(payload.new_password) < 6:
         raise HTTPException(400, "New password must be at least 6 characters")
-    _update_env_file({"ADMIN_PASSWORD": payload.new_password})
+    await set_password(payload.new_password)
     return {"ok": True}
 
 
@@ -578,22 +590,29 @@ async def upload_pdf(file: UploadFile = File(...), _user: str = Depends(require_
         raise HTTPException(413, "PDF exceeds 10 MB")
     if not data.startswith(b"%PDF"):
         raise HTTPException(400, "File does not look like a valid PDF")
-    PDF_PATH.write_bytes(data)
+    await storage_upload(PDF_STORAGE_PATH, data, "application/pdf")
     return {"ok": True, "size": len(data)}
 
 
 @api.get("/settings/pdf")
 async def download_pdf(_user: str = Depends(require_session)):
-    if not PDF_PATH.exists():
+    try:
+        data = await storage_download(PDF_STORAGE_PATH)
+    except Exception:
         raise HTTPException(404, "No PDF uploaded")
-    return FileResponse(PDF_PATH, media_type="application/pdf",
-                        filename="SDU-Global-Company-Profile.pdf")
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=SDU-Global-Company-Profile.pdf"},
+    )
 
 
 @api.delete("/settings/pdf")
 async def delete_pdf(_user: str = Depends(require_session)):
-    if PDF_PATH.exists():
-        PDF_PATH.unlink()
+    try:
+        await storage_remove(PDF_STORAGE_PATH)
+    except Exception:
+        pass
     return {"ok": True}
 
 
@@ -605,15 +624,21 @@ async def send_test(email_id: str, _user: str = Depends(require_session)):
         raise HTTPException(404, "Email not found")
     if not doc.get("subject") or not doc.get("intro"):
         raise HTTPException(400, "Generate the email first")
-    own = os.environ.get("FROM_EMAIL", "").strip()
+    runtime_settings = await get_settings_map()
+    own = (runtime_settings.get("FROM_EMAIL") or os.environ.get("FROM_EMAIL", "")).strip()
     if not own:
         raise HTTPException(400, "FROM_EMAIL is not configured")
     gen = GeneratedEmail(subject=f"[TEST] {doc['subject']}", intro=doc["intro"])
     greeting = build_greeting(doc.get("contact_name", ""), doc["contact_email"])
-    html = render_html(greeting, gen, doc["company_name"])
-    plain = render_plain(greeting, gen, doc["company_name"])
+    html = render_html(greeting, gen, doc["company_name"], runtime_settings)
+    plain = render_plain(greeting, gen, doc["company_name"], runtime_settings)
     try:
-        msg_id = send_email(own, gen.subject, html, plain, attachments=_build_pdf_attachment())
+        msg_id = send_email(
+            own, gen.subject, html, plain,
+            attachments=await _build_pdf_attachment(),
+            from_email=own,
+            from_name=runtime_settings.get("FROM_NAME"),
+        )
         return {"ok": True, "message_id": msg_id, "to": own}
     except Exception as e:
         raise HTTPException(502, f"Send failed: {e}")
@@ -621,8 +646,30 @@ async def send_test(email_id: str, _user: str = Depends(require_session)):
 
 # ---------- Resend webhook (delivery tracking) ----------
 @app.post("/api/webhooks/resend")
-async def resend_webhook(payload: dict):
-    """Public webhook — no auth. Resend signs with a secret; verify if configured."""
+async def resend_webhook(request: Request):
+    """Verify and process Resend delivery events using the unmodified request body."""
+    secret = os.environ.get("RESEND_WEBHOOK_SECRET", "").strip()
+    if not secret:
+        raise HTTPException(503, "Resend webhook verification is not configured")
+    raw = await request.body()
+    webhook_id = request.headers.get("svix-id", "")
+    headers = {
+        "id": webhook_id,
+        "timestamp": request.headers.get("svix-timestamp", ""),
+        "signature": request.headers.get("svix-signature", ""),
+    }
+    try:
+        resend.Webhooks.verify({
+            "payload": raw.decode("utf-8"),
+            "headers": headers,
+            "webhook_secret": secret,
+        })
+        payload = json.loads(raw)
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(400, f"Invalid webhook: {exc}")
+
+    if await logs_col.find_one({"id": webhook_id}):
+        return {"ok": True, "duplicate": True}
     event = (payload.get("type") or payload.get("event") or "").lower()
     data = payload.get("data") or {}
     msg_id = data.get("email_id") or data.get("id") or payload.get("id") or ""
@@ -647,7 +694,7 @@ async def resend_webhook(payload: dict):
     await emails_col.update_one({"message_id": msg_id}, {"$set": upd})
     await logs_col.update_many({"message_id": msg_id}, {"$set": {"status": field, "last_event_at": now}})
     await logs_col.insert_one({
-        "id": str(uuid.uuid4()), "message_id": msg_id, "event": event,
+        "id": webhook_id, "message_id": msg_id, "event": event,
         "status": field, "timestamp": now,
     })
     return {"ok": True}
@@ -665,8 +712,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
