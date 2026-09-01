@@ -68,33 +68,22 @@ npm start
 
 ## Vercel deployment
 
-Deploy this repository as two Vercel projects. This uses generally available framework support and does not depend on Vercel Services private beta.
+This repository deploys as one Vercel Services project using the root `vercel.json`:
 
-### Backend project
+- `frontend/`: Create React App service at `/`
+- `backend/`: FastAPI service at `/api`
+- Python: 3.12 from `backend/.python-version`
+- Frontend build/output: `npm run build` / `build`
+- API requests remain same-origin, so no separate frontend backend URL is needed in production
 
-- Root Directory: `backend`
-- Framework preset: FastAPI (auto-detected)
-- Python: 3.12 from `.python-version`
-- Build/output overrides: none
-- Add all backend variables from `backend/.env.example`
-
-### Frontend project
-
-- Root Directory: `frontend`
-- Framework preset: Create React App
-- Build command: `npm run build`
-- Output directory: `build`
-- Set `REACT_APP_BACKEND_URL` to the backend production URL
-- `frontend/vercel.json` supplies the React Router SPA fallback
-
-Set backend `CORS_ORIGINS` to the exact frontend production origin. Multiple origins can be comma-separated.
+Select the **Services** application preset when importing the repository and add the backend variables from `backend/.env.example` to the project.
 
 ## Resend webhook
 
 After the backend is deployed, create a Resend webhook pointing to:
 
 ```text
-https://YOUR-BACKEND-DOMAIN/api/webhooks/resend
+https://YOUR-PROJECT-DOMAIN/api/webhooks/resend
 ```
 
 Subscribe to the email delivery events you need, then put its signing secret in `RESEND_WEBHOOK_SECRET`. Incoming events are signature-verified and de-duplicated using the Svix event ID.
