@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft, Plus, Check } from "lucide-react";
@@ -21,14 +21,14 @@ export default function LeadProfile() {
   const [newTask, setNewTask] = useState({ title: "", due_date: "" });
   const [newMeeting, setNewMeeting] = useState({ date: "", time: "", outcome: "", notes: "", next_action: "" });
 
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     const [l, m, t, ts, ms] = await Promise.all([
       getLead(id), getCrmMeta(), getLeadTimeline(id),
       listTasks({ lead_id: id }), listMeetings(id),
     ]);
     setLead(l.data); setMeta(m.data); setTimeline(t.data); setTasks(ts.data); setMeetings(ms.data);
-  };
-  useEffect(() => { loadAll().catch(() => toast.error("Failed to load")); }, [id]);
+  }, [id]);
+  useEffect(() => { loadAll().catch(() => toast.error("Failed to load")); }, [loadAll]);
 
   if (!lead) return <div className="p-10 text-slate-500 text-sm">Loading…</div>;
 

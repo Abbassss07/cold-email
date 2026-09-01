@@ -9,20 +9,17 @@ export default function Logs() {
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const { data } = await getLogs({ q: q || undefined, status: status || undefined });
-      setRows(data);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { load(); }, []);
   // re-fetch when filters change with small debounce
   useEffect(() => {
-    const t = setTimeout(load, 300);
+    const t = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const { data } = await getLogs({ q: q || undefined, status: status || undefined });
+        setRows(data);
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
     return () => clearTimeout(t);
   }, [q, status]);
 
