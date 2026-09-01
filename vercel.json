@@ -6,7 +6,9 @@
       "framework": "create-react-app"
     },
     "backend": {
-      "root": "backend"
+      "root": "backend",
+      "framework": "fastapi",
+      "entrypoint": "server:app"
     }
   },
   "rewrites": [
